@@ -1,10 +1,10 @@
 use crate::command::Command;
-use crate::Db;
+use crate::{Config, Db};
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 
-pub async fn handle_client(mut stream: TcpStream, db: Db) {
+pub async fn handle_client(mut stream: TcpStream, db: Db, config: Config) {
     let mut buffer = [0; 512];
     loop {
         buffer.fill(0);
@@ -22,7 +22,7 @@ pub async fn handle_client(mut stream: TcpStream, db: Db) {
                 println!("Received message: {:?}", message);
                 match Command::parse_message(message) {
                     Ok(command) => {
-                        if let Err(e) = command.handle_command(&mut stream, Arc::clone(&db)).await {
+                        if let Err(e) = command.handle_command(&mut stream, Arc::clone(&db), Arc::clone(&config)).await {
                             println!("Failed to send response: {}", e);
                         }
                     }
@@ -37,4 +37,54 @@ pub async fn handle_client(mut stream: TcpStream, db: Db) {
             }
         }
     }
+}
+
+pub async fn handle_env(args: Vec<String>, config: Config) -> Result<(), String> {
+    if args.len() <= 1 {
+        println!("No configuration arguments provided. Using default settings.");
+        return Ok(());
+    }
+
+    let mut dir: Option<String> = None;
+    let mut path_name: Option<String> = None;
+    let mut arg_index = 1;
+
+    while arg_index < args.len() {
+        match args[arg_index].as_str() {
+            "--dir" => {
+                if arg_index + 1 < args.len() {
+                    dir = Some(args[arg_index + 1].clone());
+                    arg_index += 2;
+                } else {
+                    return Err("Argument Error: --dir option requires an argument".into());
+                }
+            }
+            "--dbfilename" => {
+                if arg_index + 1 < args.len() {
+                    path_name = Some(args[arg_index + 1].clone());
+                    arg_index += 2;
+                } else {
+                    return Err("Argument Error: --dbfilename option requires an argument".into());
+                }
+            }
+            _ => return Err(format!("Argument Error: '{}' is an unknown option", args[arg_index])),
+        }
+    }
+
+    match (dir, path_name) {
+        (Some(dir), Some(path_name)) => {
+            let mut config_guard = config.write().await;
+            config_guard.insert("dir".to_string(), dir);
+            config_guard.insert("dbfilename".to_string(), path_name);
+            println!("Environment configuration applied.");
+        }
+        (None, None) => {
+            println!("No configuration arguments provided. Using default settings.");
+        }
+        _ => {
+            return Err("Argument Error: Both --dir and --dbfilename must be provided together.".into());
+        }
+    }
+
+    Ok(())
 }

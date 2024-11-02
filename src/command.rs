@@ -1,4 +1,4 @@
-use crate::{Db, ValueEntry};
+use crate::{Config, Db, ValueEntry};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
@@ -7,6 +7,11 @@ pub enum Command {
     ECHO(String),
     GET(String),
     SET { key: String, value: String, px: Option<u64>, ex: Option<u64> },
+    CONFIG(ConfigCommand),
+}
+
+pub enum ConfigCommand {
+    GET(String),
 }
 
 impl Command {
@@ -38,6 +43,7 @@ impl Command {
                     "ECHO" => Command::parse_echo(&args),
                     "GET" => Command::parse_get(&args),
                     "SET" => Command::parse_set(&args),
+                    "CONFIG" => Command::parse_config(&args),
                     _ => Err(format!("Unknown command: {}", command_name)),
                 }
             } else {
@@ -48,18 +54,19 @@ impl Command {
         }
     }
 
-    pub async fn handle_command(&self, stream: &mut TcpStream, db: Db) -> std::io::Result<()> {
-        let response = self.execute(db).await;
+    pub async fn handle_command(&self, stream: &mut TcpStream, db: Db, config: Config) -> std::io::Result<()> {
+        let response = self.execute(db, config).await;
         stream.write_all(response.as_bytes()).await?;
         Ok(())
     }
 
-    pub async fn execute(&self, db: Db) -> String {
+    pub async fn execute(&self, db: Db, config: Config) -> String {
         match self {
             Command::PING => "+PONG\r\n".to_string(),
             Command::ECHO(echo_message) => format!("${}\r\n{}\r\n", echo_message.len(), echo_message),
             Command::GET(key) => Self::execute_get(&key, db).await,
             Command::SET { key, value, ex, px } => Self::execute_set(key, value, *ex, *px, db).await,
+            Command::CONFIG(command) => Self::execute_config(command, config).await,
         }
     }
 
@@ -69,7 +76,7 @@ impl Command {
                 if value_entry.is_expired() {
                     "$-1\r\n".to_string()
                 } else {
-                    format!("${}\r\n{}\r\n", value_entry.value.len(), value_entry.value.clone()) // `.clone()` 추가
+                    format!("${}\r\n{}\r\n", value_entry.value.len(), value_entry.value.clone())
                 }
             }
             None => "$-1\r\n".to_string(),
@@ -79,6 +86,19 @@ impl Command {
     async fn execute_set(key: &String, value: &String, ex: Option<u64>, px: Option<u64>, db: Db) -> String {
         db.write().await.insert(key.clone(), ValueEntry::new(value.clone(), ex, px));
         "+OK\r\n".to_string()
+    }
+
+    async fn execute_config(command: &ConfigCommand, config: Config) -> String {
+        match command {
+            ConfigCommand::GET(key) => {
+                match config.read().await.get(key.as_str()) {
+                    Some(value) => {
+                        format!("*2\r\n${}\r\n{}\r\n${}\r\n{}\r\n", key.len(), key, value.len(), value)
+                    }
+                    None => "$-1\r\n".to_string(),
+                }
+            }
+        }
     }
 
     fn parse_ping(args: &[String]) -> Result<Command, String> {
@@ -137,5 +157,14 @@ impl Command {
         }
 
         Ok(Command::SET { key, value, ex, px })
+    }
+
+    fn parse_config(args: &[String]) -> Result<Command, String> {
+        match args[1].to_uppercase().as_str() {
+            "GET" => {
+                Ok(Command::CONFIG(ConfigCommand::GET(args[2].clone())))
+            }
+            _ => Err("Argument Error : Unsupported CONFIG subcommand!".into()),
+        }
     }
 }
