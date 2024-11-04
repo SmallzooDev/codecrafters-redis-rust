@@ -1,4 +1,4 @@
-use crate::command::Command;
+use crate::command_parser::parse_message;
 use crate::{Config, Db};
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
@@ -20,7 +20,7 @@ pub async fn handle_client(mut stream: TcpStream, db: Db, config: Config) {
                 };
 
                 println!("Received message: {:?}", message);
-                match Command::parse_message(message) {
+                match parse_message(message) {
                     Ok(command) => {
                         if let Err(e) = command.handle_command(&mut stream, Arc::clone(&db), Arc::clone(&config)).await {
                             println!("Failed to send response: {}", e);

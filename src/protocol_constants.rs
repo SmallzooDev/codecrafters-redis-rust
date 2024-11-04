@@ -1,0 +1,36 @@
+pub const ARRAY_PREFIX: &str = "*";
+pub const BULK_STRING_PREFIX: &str = "$";
+pub const SIMPLE_STRING_PREFIX: &str = "+";
+pub const CRLF: &str = "\r\n";
+
+pub const PING_COMMAND: &str = "PING";
+pub const ECHO_COMMAND: &str = "ECHO";
+pub const GET_COMMAND: &str = "GET";
+pub const SET_COMMAND: &str = "SET";
+pub const CONFIG_COMMAND: &str = "CONFIG";
+
+pub const PX_OPTION: &str = "PX";
+pub const EX_OPTION: &str = "EX";
+
+pub const CONFIG_GET_OPTION: &str = "GET";
+
+// Error messages
+pub const EMPTY_MESSAGE_ERROR: &str = "Empty message";
+pub const INVALID_ARRAY_SIZE_ERROR: &str = "Invalid array size";
+pub const MISSING_BULK_LENGTH_ERROR: &str = "Missing bulk length";
+pub const INVALID_BULK_STRING_FORMAT_ERROR: &str = "Invalid bulk string format";
+pub const INVALID_BULK_LENGTH_ERROR: &str = "Invalid bulk length";
+pub const MISSING_BULK_STRING_ERROR: &str = "Missing bulk string";
+pub const BULK_STRING_LENGTH_MISMATCH_ERROR: &str = "Bulk string length mismatch";
+pub const EMPTY_COMMAND_ERROR: &str = "Empty command";
+pub const UNSUPPORTED_PROTOCOL_ERROR: &str = "Unsupported protocol type";
+pub const UNKNOWN_COMMAND_ERROR: &str = "Unknown command";
+
+pub const ARGUMENT_ERROR: &str = "Argument Error";
+pub const SET_ARGUMENTS_ERROR: &str = "SET requires at least key and value arguments";
+pub const UNKNOWN_OPTION_ERROR: &str = "Unknown option";
+pub const INVALID_OPTION_VALUE_ERROR: &str = "Invalid option value";
+pub const OPTION_ARGUMENT_MISSING_ERROR: &str = "Option requires an argument";
+
+pub const CONFIG_ARGUMENTS_ERROR: &str = "CONFIG subcommand requires at least 2 arguments";
+pub const UNSUPPORTED_CONFIG_SUBCOMMAND_ERROR: &str = "Unsupported CONFIG subcommand";

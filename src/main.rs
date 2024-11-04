@@ -1,6 +1,9 @@
 mod command;
 mod value_entry;
 mod handler;
+mod command_parser;
+mod errors;
+mod protocol_constants;
 
 use crate::handler::{handle_client, handle_env};
 use crate::value_entry::ValueEntry;
