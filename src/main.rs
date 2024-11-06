@@ -4,8 +4,12 @@ mod handler;
 mod command_parser;
 mod errors;
 mod protocol_constants;
+mod rdb_parser;
+mod debug_handler;
 
+use crate::debug_handler::debug_file_structure;
 use crate::handler::{handle_client, handle_env};
+use crate::rdb_parser::run;
 use crate::value_entry::ValueEntry;
 use std::collections::HashMap;
 use std::env;
@@ -29,6 +33,10 @@ async fn main() {
         eprintln!("Failed to handle environment configuration: {}", e);
         return;
     }
+
+    // todo: add args for debug flag and exec below line optionally
+    debug_file_structure(config.clone()).await;
+    run(db.clone(), config.clone()).await;
 
     loop {
         match listener.accept().await {

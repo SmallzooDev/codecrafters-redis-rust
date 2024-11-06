@@ -14,6 +14,18 @@ pub const EX_OPTION: &str = "EX";
 
 pub const CONFIG_GET_OPTION: &str = "GET";
 
+pub const OPCODE_START_DB: u8 = 0xFE;
+pub const OPCODE_EXPIRETIME_MS: u8 = 0xFC;
+pub const OPCODE_EXPIRETIME_S: u8 = 0xFD;
+pub const OPCODE_META: u8 = 0xFA;
+
+pub const OPCODE_SIZE: u8 = 0xFB;
+pub const OPCODE_EOF: u8 = 0xFF;
+pub const OPCODE_STRING: u8 = 0x00;
+pub const OPCODE_LIST: u8 = 0x01;
+pub const OPCODE_HASH: u8 = 0x04;
+pub const MAGIC_NUMBER: &[u8] = b"REDIS";
+
 // Error messages
 pub const EMPTY_MESSAGE_ERROR: &str = "Empty message";
 pub const INVALID_ARRAY_SIZE_ERROR: &str = "Invalid array size";

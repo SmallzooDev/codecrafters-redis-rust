@@ -46,7 +46,7 @@ pub async fn handle_env(args: Vec<String>, config: Config) -> Result<(), String>
     }
 
     let mut dir: Option<String> = None;
-    let mut path_name: Option<String> = None;
+    let mut file_name: Option<String> = None;
     let mut arg_index = 1;
 
     while arg_index < args.len() {
@@ -61,7 +61,7 @@ pub async fn handle_env(args: Vec<String>, config: Config) -> Result<(), String>
             }
             "--dbfilename" => {
                 if arg_index + 1 < args.len() {
-                    path_name = Some(args[arg_index + 1].clone());
+                    file_name = Some(args[arg_index + 1].clone());
                     arg_index += 2;
                 } else {
                     return Err("Argument Error: --dbfilename option requires an argument".into());
@@ -71,7 +71,7 @@ pub async fn handle_env(args: Vec<String>, config: Config) -> Result<(), String>
         }
     }
 
-    match (dir, path_name) {
+    match (dir, file_name) {
         (Some(dir), Some(path_name)) => {
             let mut config_guard = config.write().await;
             config_guard.insert("dir".to_string(), dir);
