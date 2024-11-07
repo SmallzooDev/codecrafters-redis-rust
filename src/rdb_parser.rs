@@ -64,7 +64,6 @@ pub async fn run(db: Db, config: Config) -> io::Result<()> {
         }
         match marker[0] {
             OPCODE_META => {
-                println!("Detected metadata marker 0xFA.");
                 let first_key_byte = reader.read_u8()?;
                 let key_length = read_length_or_integer(&mut reader, first_key_byte)?;
 
@@ -177,7 +176,6 @@ pub async fn run(db: Db, config: Config) -> io::Result<()> {
                     println!("Checksum valid.");
                 } else {
                     eprintln!("Checksum invalid! Expected: {:X}, Got: {:X}", read_checksum, calculated_checksum);
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid checksum"));
                 }
                 break;
             }

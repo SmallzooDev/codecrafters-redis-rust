@@ -35,7 +35,10 @@ async fn main() {
 
     // todo: add args for debug flag and exec below line optionally
     // debug_file_structure(config.clone()).await;
-    run(db.clone(), config.clone()).await;
+
+    if let Err(e) = run(db.clone(), config.clone()).await {
+        eprintln!("Error during run: {}", e);
+    }
 
     loop {
         match listener.accept().await {
