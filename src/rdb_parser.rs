@@ -44,7 +44,6 @@ pub async fn run(db: Db, config: Config) -> io::Result<()> {
     let file = File::open(&path)?;
     let mut reader = BufReader::new(file);
 
-    // Check magic number
     let mut magic = [0; 5];
     reader.read_exact(&mut magic)?;
     if &magic != MAGIC_NUMBER {
@@ -53,20 +52,16 @@ pub async fn run(db: Db, config: Config) -> io::Result<()> {
     }
     println!("Valid Redis RDB file detected.");
 
-    // Check RDB version
     let mut version = [0; 4];
     reader.read_exact(&mut version)?;
     println!("RDB Version: {}", String::from_utf8_lossy(&version));
 
     loop {
-        let marker_position = reader.stream_position()?;
         let mut marker = [0; 1];
         if reader.read_exact(&mut marker).is_err() {
             println!("Reached the end of file.");
             break;
         }
-        println!("Marker 0x{:02X} detected at position {}", marker[0], marker_position);
-
         match marker[0] {
             OPCODE_META => {
                 println!("Detected metadata marker 0xFA.");
@@ -81,7 +76,7 @@ pub async fn run(db: Db, config: Config) -> io::Result<()> {
                 let first_value_byte = reader.read_u8()?;
                 if first_value_byte >> 6 == 0b11 {
                     let value = read_length_or_integer(&mut reader, first_value_byte)?;
-                    println!("Metadata value (interpreted as integer): {}", value);
+                    println!("Metadata value : {}", value);
                 } else {
                     let value_length = read_length_or_integer(&mut reader, first_value_byte)?;
                     let mut value_bytes = vec![0; value_length];
@@ -119,6 +114,7 @@ pub async fn run(db: Db, config: Config) -> io::Result<()> {
                 };
 
                 let value_type = reader.read_u8()?;
+                println!("value type ::::: {}", value_type);
                 let key_length = reader.read_u8()? as usize;
                 let mut key = vec![0; key_length];
                 reader.read_exact(&mut key)?;
@@ -141,27 +137,17 @@ pub async fn run(db: Db, config: Config) -> io::Result<()> {
             0x00 => {
                 println!("Processing key-value pair without expiration.");
 
-                // Interpreting next byte(s) as key length rather than `value_type`
-                let key_length_position = reader.stream_position()?;
                 let key_length = reader.read_u8()? as usize;
-                println!("Key length: {} at position {}", key_length, key_length_position);
 
                 let mut key = vec![0; key_length];
                 reader.read_exact(&mut key)?;
                 let key_str = String::from_utf8_lossy(&key).to_string();
-                let after_key_position = reader.stream_position()?;
-                println!("Read key: {} at position {}", key_str, after_key_position);
 
-                // Reading value length next
-                let value_length_position = reader.stream_position()?;
                 let value_length = reader.read_u8()? as usize;
-                println!("Value length: {} at position {}", value_length, value_length_position);
 
                 let mut value = vec![0; value_length];
                 reader.read_exact(&mut value)?;
                 let value_str = String::from_utf8_lossy(&value).to_string();
-                let after_value_position = reader.stream_position()?;
-                println!("Read value: {} at position {}", value_str, after_value_position);
 
                 let entry = ValueEntry::new(value_str.clone(), None, None);
                 db.write().await.insert(key_str.clone(), entry);
@@ -170,13 +156,11 @@ pub async fn run(db: Db, config: Config) -> io::Result<()> {
             OPCODE_EOF => {
                 println!("Reached end of RDB file.");
 
-                // Read the checksum bytes in Big-Endian format to check if this resolves the issue
                 let mut checksum_bytes = [0; 8];
                 reader.read_exact(&mut checksum_bytes)?;
-                let read_checksum = u64::from_be_bytes(checksum_bytes);  // Change to Big-Endian
+                let read_checksum = u64::from_be_bytes(checksum_bytes);
                 println!("Read checksum (Big-Endian): {:X}", read_checksum);
 
-                // Calculate checksum on the file content excluding the last 8 bytes
                 reader.seek(SeekFrom::Start(0))?;
                 let mut buffer = Vec::new();
                 reader.read_to_end(&mut buffer)?;
@@ -185,12 +169,10 @@ pub async fn run(db: Db, config: Config) -> io::Result<()> {
                 println!("Data length for checksum calculation: {}", data_to_hash.len());
                 println!("Data for checksum calculation (first 64 bytes): {}", bytes_to_hex(&data_to_hash[..64.min(data_to_hash.len())]));
 
-                // CRC64 checksum calculation with variations
                 let crc = Crc::<u64>::new(&CRC_64_ECMA_182);
                 let calculated_checksum = crc.checksum(data_to_hash);
                 println!("Calculated checksum: {:X}", calculated_checksum);
 
-                // Compare calculated checksum with the one in the file
                 if calculated_checksum == read_checksum {
                     println!("Checksum valid.");
                 } else {
