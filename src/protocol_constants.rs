@@ -9,6 +9,8 @@ pub const GET_COMMAND: &str = "GET";
 pub const SET_COMMAND: &str = "SET";
 pub const CONFIG_COMMAND: &str = "CONFIG";
 
+pub const KEYS_COMMAND: &str = "KEYS";
+
 pub const PX_OPTION: &str = "PX";
 pub const EX_OPTION: &str = "EX";
 
@@ -46,3 +48,5 @@ pub const OPTION_ARGUMENT_MISSING_ERROR: &str = "Option requires an argument";
 
 pub const CONFIG_ARGUMENTS_ERROR: &str = "CONFIG subcommand requires at least 2 arguments";
 pub const UNSUPPORTED_CONFIG_SUBCOMMAND_ERROR: &str = "Unsupported CONFIG subcommand";
+
+pub const UNSUPPORTED_PATTERN_ERROR: &str = "Unsupported KEY command args pattern";

@@ -9,6 +9,7 @@ pub enum Command {
     GET(String),
     SET { key: String, value: String, px: Option<u64>, ex: Option<u64> },
     CONFIG(ConfigCommand),
+    KEYS(String),
 }
 
 pub enum ConfigCommand {
@@ -25,10 +26,11 @@ impl Command {
     pub async fn execute(&self, db: Db, config: Config) -> String {
         match self {
             Command::PING => format!("{}PONG{}", SIMPLE_STRING_PREFIX, CRLF),
-            Command::ECHO(echo_message) => format!("{}{}{}{}", BULK_STRING_PREFIX, echo_message.len(), CRLF, echo_message),
+            Command::ECHO(echo_message) => format!("{}{}{}{}{}", BULK_STRING_PREFIX, echo_message.len(), CRLF, echo_message, CRLF),
             Command::GET(key) => Self::execute_get(key, db).await,
             Command::SET { key, value, ex, px } => Self::execute_set(key, value, *ex, *px, db).await,
             Command::CONFIG(command) => Self::execute_config(command, config).await,
+            Command::KEYS(pattern) => Self::execute_keys(db).await,
         }
     }
 
@@ -61,5 +63,14 @@ impl Command {
                 }
             }
         }
+    }
+
+    async fn execute_keys(db: Db) -> String {
+        let keys: Vec<String> = db.read().await.keys().cloned().collect();
+        let mut response = format!("*{}\r\n", keys.len());
+        for key in keys {
+            response.push_str(&format!("${}\r\n{}\r\n", key.len(), key));
+        }
+        response
     }
 }

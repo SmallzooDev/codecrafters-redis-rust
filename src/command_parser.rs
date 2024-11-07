@@ -31,6 +31,7 @@ pub fn parse_message(message: &str) -> Result<Command, ArgumentError> {
                 GET_COMMAND => parse_get(&args),
                 SET_COMMAND => parse_set(&args),
                 CONFIG_COMMAND => parse_config(&args),
+                KEYS_COMMAND => parse_keys(&args),
                 _ => Err(ArgumentError::General(format!("{}: {}", UNKNOWN_COMMAND_ERROR, command_name))),
             }
         } else {
@@ -109,4 +110,12 @@ fn parse_config(args: &[String]) -> Result<Command, ArgumentError> {
         CONFIG_GET_OPTION => Ok(Command::CONFIG(ConfigCommand::GET(args[2].clone()))),
         _ => Err(ArgumentError::General(UNSUPPORTED_CONFIG_SUBCOMMAND_ERROR.into())),
     }
+}
+
+fn parse_keys(args: &[String]) -> Result<Command, ArgumentError> {
+    check_args_len(args, 2, KEYS_COMMAND)?;
+    if args[1] != "*" {
+        return Err(ArgumentError::General(UNSUPPORTED_PATTERN_ERROR.into()));
+    }
+    Ok(Command::KEYS(args[1].clone()))
 }
