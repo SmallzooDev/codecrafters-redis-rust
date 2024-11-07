@@ -1,6 +1,6 @@
 use crate::protocol_constants::{MAGIC_NUMBER, OPCODE_EOF, OPCODE_META, OPCODE_START_DB};
 use crate::{Config, Db, ValueEntry};
-use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt};
 use crc::{Crc, CRC_64_ECMA_182};
 use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
@@ -16,11 +16,11 @@ fn read_length_or_integer<R: Read>(reader: &mut R, first_byte: u8) -> io::Result
             let second_byte = reader.read_u8()?;
             Ok((((first_byte & 0x3F) as usize) << 8) | (second_byte as usize))
         }
-        0b10 => reader.read_u32::<BigEndian>().map(|len| len as usize),
+        0b10 => reader.read_u32::<LittleEndian>().map(|len| len as usize),
         0b11 => match first_byte & 0x3F {
             0 => Ok(reader.read_u8()? as usize),
-            1 => Ok(reader.read_u16::<BigEndian>()? as usize),
-            2 => Ok(reader.read_u32::<BigEndian>()? as usize),
+            1 => Ok(reader.read_u16::<LittleEndian>()? as usize),
+            2 => Ok(reader.read_u32::<LittleEndian>()? as usize),
             _ => Err(io::Error::new(io::ErrorKind::InvalidData, "Unsupported encoding type")),
         },
         _ => Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length encoding")),
@@ -113,7 +113,7 @@ pub async fn run(db: Db, config: Config) -> io::Result<()> {
                 };
 
                 let value_type = reader.read_u8()?;
-                println!("value type ::::: {}", value_type);
+                println!("Value type ::::: {}", value_type);
                 let key_length = reader.read_u8()? as usize;
                 let mut key = vec![0; key_length];
                 reader.read_exact(&mut key)?;
