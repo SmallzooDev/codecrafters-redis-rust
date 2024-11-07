@@ -158,8 +158,8 @@ pub async fn run(db: Db, config: Config) -> io::Result<()> {
 
                 let mut checksum_bytes = [0; 8];
                 reader.read_exact(&mut checksum_bytes)?;
-                let read_checksum = u64::from_be_bytes(checksum_bytes);
-                println!("Read checksum (Big-Endian): {:X}", read_checksum);
+                let read_checksum = u64::from_le_bytes(checksum_bytes);
+                println!("Read checksum (Little-Endian): {:X}", read_checksum);
 
                 reader.seek(SeekFrom::Start(0))?;
                 let mut buffer = Vec::new();
@@ -167,7 +167,7 @@ pub async fn run(db: Db, config: Config) -> io::Result<()> {
 
                 let data_to_hash = &buffer[..buffer.len() - 8];
                 println!("Data length for checksum calculation: {}", data_to_hash.len());
-                println!("Data for checksum calculation (first 64 bytes): {}", bytes_to_hex(&data_to_hash[..64.min(data_to_hash.len())]));
+                println!("Data (first 64 bytes for check): {}", bytes_to_hex(&data_to_hash[..64.min(data_to_hash.len())]));
 
                 let crc = Crc::<u64>::new(&CRC_64_ECMA_182);
                 let calculated_checksum = crc.checksum(data_to_hash);
