@@ -11,19 +11,33 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 
 fn read_length_or_integer<R: Read>(reader: &mut R, first_byte: u8) -> io::Result<usize> {
     match first_byte >> 6 {
-        0b00 => Ok((first_byte & 0x3F) as usize),
-        0b01 => {
-            let second_byte = reader.read_u8()?;
-            Ok((((first_byte & 0x3F) as usize) << 8) | (second_byte as usize))
-        }
-        0b10 => reader.read_u32::<LittleEndian>().map(|len| len as usize),
-        0b11 => match first_byte & 0x3F {
-            0 => Ok(reader.read_u8()? as usize),
-            1 => Ok(reader.read_u16::<LittleEndian>()? as usize),
-            2 => Ok(reader.read_u32::<LittleEndian>()? as usize),
-            _ => Err(io::Error::new(io::ErrorKind::InvalidData, "Unsupported encoding type")),
-        },
+        0b00 => Ok(read_6bit_length(first_byte)),
+        0b01 => read_14bit_length(reader, first_byte),
+        0b10 => read_32bit_length(reader),
+        0b11 => read_encoded_integer(reader, first_byte & 0x3F),
         _ => Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid length encoding")),
+    }
+}
+
+fn read_6bit_length(first_byte: u8) -> usize {
+    (first_byte & 0x3F) as usize
+}
+
+fn read_14bit_length<R: Read>(reader: &mut R, first_byte: u8) -> io::Result<usize> {
+    let second_byte = reader.read_u8()?;
+    Ok((((first_byte & 0x3F) as usize) << 8) | (second_byte as usize))
+}
+
+fn read_32bit_length<R: Read>(reader: &mut R) -> io::Result<usize> {
+    reader.read_u32::<LittleEndian>().map(|len| len as usize)
+}
+
+fn read_encoded_integer<R: Read>(reader: &mut R, encoding_type: u8) -> io::Result<usize> {
+    match encoding_type {
+        0 => reader.read_u8().map(|val| val as usize),
+        1 => reader.read_u16::<LittleEndian>().map(|val| val as usize),
+        2 => reader.read_u32::<LittleEndian>().map(|val| val as usize),
+        _ => Err(io::Error::new(io::ErrorKind::InvalidData, "Unsupported encoding type")),
     }
 }
 
