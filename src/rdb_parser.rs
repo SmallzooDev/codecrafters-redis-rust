@@ -127,7 +127,7 @@ pub async fn run(db: Db, config: Config) -> io::Result<()> {
                 };
 
                 let value_type = reader.read_u8()?;
-                println!("Value type ::::: {}", value_type);
+                println!("Value type : {}", value_type);
                 let key_length = reader.read_u8()? as usize;
                 let mut key = vec![0; key_length];
                 reader.read_exact(&mut key)?;
@@ -144,12 +144,10 @@ pub async fn run(db: Db, config: Config) -> io::Result<()> {
                     if marker[0] == 0xFC { expiration } else { None },
                 );
                 db.write().await.insert(key_str.clone(), entry);
-                println!("Inserted key: {} with value: {}", key_str, value_str);
+                println!("Inserted key: {} with value: {} with exp", key_str, value_str);
                 continue;
             }
             0x00 => {
-                println!("Processing key-value pair without expiration.");
-
                 let key_length = reader.read_u8()? as usize;
 
                 let mut key = vec![0; key_length];
@@ -164,7 +162,7 @@ pub async fn run(db: Db, config: Config) -> io::Result<()> {
 
                 let entry = ValueEntry::new(value_str.clone(), None, None);
                 db.write().await.insert(key_str.clone(), entry);
-                println!("Inserted key: {} with value: {}", key_str, value_str);
+                println!("Inserted key: {} with value: {} without exp", key_str, value_str);
             }
             OPCODE_EOF => {
                 println!("Reached end of RDB file.");
@@ -179,8 +177,6 @@ pub async fn run(db: Db, config: Config) -> io::Result<()> {
                 reader.read_to_end(&mut buffer)?;
 
                 let data_to_hash = &buffer[..buffer.len() - 8];
-                println!("Data length for checksum calculation: {}", data_to_hash.len());
-                println!("Data (first 64 bytes for check): {}", bytes_to_hex(&data_to_hash[..64.min(data_to_hash.len())]));
 
                 let crc = Crc::<u64>::new(&CRC_64_ECMA_182);
                 let calculated_checksum = crc.checksum(data_to_hash);
