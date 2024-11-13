@@ -48,7 +48,13 @@ impl Command {
     }
 
     async fn execute_set(key: &String, value: &String, ex: Option<u64>, px: Option<u64>, db: Db) -> String {
-        db.write().await.insert(key.clone(), ValueEntry::new(value.clone(), ex, px));
+        let expiration_ms = match (px, ex) {
+            (Some(ms), _) => Some(ms),
+            (None, Some(s)) => Some(s * 1000),
+            _ => None,
+        };
+
+        db.write().await.insert(key.clone(), ValueEntry::new_relative(value.clone(), expiration_ms));
         format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF)
     }
 

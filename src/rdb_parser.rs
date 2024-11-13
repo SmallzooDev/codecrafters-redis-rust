@@ -120,14 +120,14 @@ pub async fn run(db: Db, config: Config) -> io::Result<()> {
             }
             0xFD | 0xFC => {
                 let expiry_type = if marker[0] == 0xFD { "seconds" } else { "milliseconds" };
-                let expiration = if expiry_type == "seconds" {
-                    Some(reader.read_u32::<LittleEndian>()? as u64)
+
+                let expiration_ms = if expiry_type == "seconds" {
+                    Some((reader.read_u32::<LittleEndian>()? as u64) * 1000)
                 } else {
                     Some(reader.read_u64::<LittleEndian>()?)
                 };
 
                 let value_type = reader.read_u8()?;
-                println!("Value type : {}", value_type);
                 let key_length = reader.read_u8()? as usize;
                 let mut key = vec![0; key_length];
                 reader.read_exact(&mut key)?;
@@ -138,14 +138,9 @@ pub async fn run(db: Db, config: Config) -> io::Result<()> {
                 reader.read_exact(&mut value)?;
                 let value_str = String::from_utf8_lossy(&value).to_string();
 
-                let entry = ValueEntry::new(
-                    value_str.clone(),
-                    if marker[0] == 0xFD { expiration } else { None },
-                    if marker[0] == 0xFC { expiration } else { None },
-                );
+                let entry = ValueEntry::new_absolute(value_str.clone(), expiration_ms);
                 db.write().await.insert(key_str.clone(), entry);
-                println!("Inserted key: {} with value: {} with exp", key_str, value_str);
-                continue;
+                println!("Inserted key: {} with value: {} and expiration: {:?}", key_str, value_str, expiration_ms);
             }
             0x00 => {
                 let key_length = reader.read_u8()? as usize;
@@ -160,9 +155,10 @@ pub async fn run(db: Db, config: Config) -> io::Result<()> {
                 reader.read_exact(&mut value)?;
                 let value_str = String::from_utf8_lossy(&value).to_string();
 
-                let entry = ValueEntry::new(value_str.clone(), None, None);
+                let entry = ValueEntry::new_absolute(value_str.clone(), None);
                 db.write().await.insert(key_str.clone(), entry);
-                println!("Inserted key: {} with value: {} without exp", key_str, value_str);
+
+                println!("Inserted key: {} with value: {} without expiration", key_str, value_str);
             }
             OPCODE_EOF => {
                 println!("Reached end of RDB file.");
