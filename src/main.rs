@@ -7,6 +7,7 @@ mod protocol_constants;
 mod rdb_parser;
 mod state_manager;
 mod config_handler;
+mod replication_config;
 
 use crate::config_handler::ConfigHandler;
 use crate::handler::handle_client;
@@ -25,10 +26,11 @@ type Config = Arc<RwLock<HashMap<String, String>>>;
 #[tokio::main]
 async fn main() {
     let state = StateManager::new();
-    let mut config_handler = ConfigHandler::new(state.get_db(), state.get_config());
+    let mut config_handler = ConfigHandler::new(state.get_db(), state.get_config(), state.get_replication_config());
 
     config_handler.load_config().await;
     config_handler.configure_db().await;
+    config_handler.configure_replication().await;
 
     let port = config_handler.get_port().await;
     let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await.unwrap();
@@ -40,8 +42,9 @@ async fn main() {
             Ok((stream, _)) => {
                 let db = state.get_db();
                 let config = state.get_config();
+                let replication_config = state.get_replication_config();
                 task::spawn(async move {
-                    handle_client(stream, db, config).await;
+                    handle_client(stream, db, config, replication_config).await;
                 });
             }
             Err(e) => {

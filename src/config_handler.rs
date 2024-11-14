@@ -1,4 +1,5 @@
 use crate::rdb_parser::RdbParser;
+use crate::replication_config::ReplicationConfig;
 use crate::value_entry::ValueEntry;
 use std::collections::HashMap;
 use std::env;
@@ -11,11 +12,12 @@ pub type Config = Arc<RwLock<HashMap<String, String>>>;
 pub struct ConfigHandler {
     db: Db,
     config: Config,
+    replication_config: ReplicationConfig,
 }
 
 impl ConfigHandler {
-    pub fn new(db: Db, config: Config) -> Self {
-        Self { db, config }
+    pub fn new(db: Db, config: Config, replication_config: ReplicationConfig) -> Self {
+        Self { db, config, replication_config }
     }
 
     pub async fn load_config(&self) {
@@ -48,6 +50,16 @@ impl ConfigHandler {
             } else {
                 eprintln!("Failed to initialize RDB parser.");
             }
+        }
+    }
+
+    pub async fn configure_replication(&self) {
+        let config_guard = self.config.read().await;
+        let replica_of_host = config_guard.get("replica_of_host").cloned().unwrap_or_default();
+        let replica_of_port = config_guard.get("replica_of_port").cloned().unwrap_or_default();
+
+        if !replica_of_host.is_empty() && !replica_of_port.is_empty() {
+            self.replication_config.set_replica_of(replica_of_host, replica_of_port.parse::<u16>().expect("none")).await;
         }
     }
 
@@ -89,7 +101,22 @@ impl ConfigHandler {
                         return Err("Argument Error: --port option requires an argument".into());
                     }
                 }
+                "--replicaof" => {
+                    if arg_index + 1 < args.len() {
+                        let replica_location = args[arg_index + 1].clone();
+                        let replica_location_split: Vec<&str> = replica_location.split_whitespace().collect();
 
+                        if replica_location_split.len() == 2 {
+                            result.push(("replica_of_host".into(), replica_location_split[0].into()));
+                            result.push(("replica_of_port".into(), replica_location_split[1].into()));
+                            arg_index += 2;
+                        } else {
+                            return Err("Argument Error: --replicaof requires a host and port (e.g., 'localhost 6379')".into());
+                        }
+                    } else {
+                        return Err("Argument Error: --replicaof requires a host and port (e.g., 'localhost 6379')".into());
+                    }
+                }
                 _ => return Err(format!("Argument Error: '{}' is an unknown option", args[arg_index])),
             }
         }

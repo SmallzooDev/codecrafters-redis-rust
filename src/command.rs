@@ -1,4 +1,5 @@
 use crate::protocol_constants::*;
+use crate::replication_config::ReplicationConfig;
 use crate::{Config, Db, ValueEntry};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
@@ -18,13 +19,13 @@ pub enum ConfigCommand {
 }
 
 impl Command {
-    pub async fn handle_command(&self, stream: &mut TcpStream, db: Db, config: Config) -> std::io::Result<()> {
-        let response = self.execute(db, config).await;
+    pub async fn handle_command(&self, stream: &mut TcpStream, db: Db, config: Config, replication_config: ReplicationConfig) -> std::io::Result<()> {
+        let response = self.execute(db, config, replication_config).await;
         stream.write_all(response.as_bytes()).await?;
         Ok(())
     }
 
-    pub async fn execute(&self, db: Db, config: Config) -> String {
+    pub async fn execute(&self, db: Db, config: Config, replication_config: ReplicationConfig) -> String {
         match self {
             Command::PING => format!("{}PONG{}", SIMPLE_STRING_PREFIX, CRLF),
             Command::ECHO(echo_message) => format!("{}{}{}{}{}", BULK_STRING_PREFIX, echo_message.len(), CRLF, echo_message, CRLF),
@@ -32,7 +33,7 @@ impl Command {
             Command::SET { key, value, ex, px } => Self::execute_set(key, value, *ex, *px, db).await,
             Command::CONFIG(command) => Self::execute_config(command, config).await,
             Command::KEYS(pattern) => Self::execute_keys(db).await,
-            Command::INFO(section) => Self::execute_info(section).await, // Handling INFO command
+            Command::INFO(section) => Self::execute_info(section, replication_config).await,
         }
     }
 
@@ -82,9 +83,9 @@ impl Command {
         response
     }
 
-    async fn execute_info(section: &String) -> String {
+    async fn execute_info(section: &String, replication_config: ReplicationConfig) -> String {
         if section.to_lowercase() == "replication" {
-            let replication_info = "role:master";
+            let replication_info = replication_config.get_replication_info().await;
             format!("${}\r\n{}\r\n", replication_info.len(), replication_info)
         } else {
             format!("{}-1{}", BULK_STRING_PREFIX, CRLF)
