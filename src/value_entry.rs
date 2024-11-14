@@ -8,7 +8,6 @@ pub struct ValueEntry {
 }
 
 impl ValueEntry {
-    // Use an absolute expiration time directly for RDB, or calculate relative duration for SET
     pub fn new_absolute(value: String, expiration_ms: Option<u64>) -> ValueEntry {
         let expiration = expiration_ms.map(|ms| UNIX_EPOCH + Duration::from_millis(ms));
         ValueEntry { value, expiration }

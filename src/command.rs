@@ -10,6 +10,7 @@ pub enum Command {
     SET { key: String, value: String, px: Option<u64>, ex: Option<u64> },
     CONFIG(ConfigCommand),
     KEYS(String),
+    INFO(String),
 }
 
 pub enum ConfigCommand {
@@ -31,6 +32,7 @@ impl Command {
             Command::SET { key, value, ex, px } => Self::execute_set(key, value, *ex, *px, db).await,
             Command::CONFIG(command) => Self::execute_config(command, config).await,
             Command::KEYS(pattern) => Self::execute_keys(db).await,
+            Command::INFO(section) => Self::execute_info(section).await, // Handling INFO command
         }
     }
 
@@ -78,5 +80,14 @@ impl Command {
             response.push_str(&format!("${}\r\n{}\r\n", key.len(), key));
         }
         response
+    }
+
+    async fn execute_info(section: &String) -> String {
+        if section.to_lowercase() == "replication" {
+            let replication_info = "role:master";
+            format!("${}\r\n{}\r\n", replication_info.len(), replication_info)
+        } else {
+            format!("{}-1{}", BULK_STRING_PREFIX, CRLF)
+        }
     }
 }

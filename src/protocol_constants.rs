@@ -10,6 +10,7 @@ pub const SET_COMMAND: &str = "SET";
 pub const CONFIG_COMMAND: &str = "CONFIG";
 
 pub const KEYS_COMMAND: &str = "KEYS";
+pub const INFO_COMMAND: &str = "INFO";
 
 pub const PX_OPTION: &str = "PX";
 pub const EX_OPTION: &str = "EX";
