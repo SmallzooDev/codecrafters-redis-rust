@@ -1,5 +1,5 @@
 use crate::protocol_constants::{MAGIC_NUMBER, OPCODE_EOF, OPCODE_META, OPCODE_START_DB};
-use crate::{Config, Db, ValueEntry};
+use crate::{Db, ValueEntry};
 use byteorder::{LittleEndian, ReadBytesExt};
 use crc::{Crc, CRC_64_ECMA_182};
 use std::fs::File;
@@ -41,21 +41,8 @@ fn read_encoded_integer<R: Read>(reader: &mut R, encoding_type: u8) -> io::Resul
     }
 }
 
-pub async fn run(db: Db, config: Config) -> io::Result<()> {
-    let config_read = config.read().await;
-    let dir = config_read.get("dir").cloned().unwrap_or_else(|| "".to_string());
-    let db_file_name = config_read.get("dbfilename").cloned().unwrap_or_else(|| "".to_string());
-    let mut path = "".to_string();
-
-    if !dir.is_empty() && !db_file_name.is_empty() {
-        println!("Initiating Redis with Data File");
-        path = format!("{}/{}", dir, db_file_name);
-    } else {
-        println!("Initiating Redis without Data File");
-        return Ok(());
-    }
-
-    let file = File::open(&path)?;
+pub async fn run_rdb_handler(db: Db, rdb_file_path: String) -> io::Result<()> {
+    let file = File::open(&rdb_file_path)?;
     let mut reader = BufReader::new(file);
 
     let mut magic = [0; 5];

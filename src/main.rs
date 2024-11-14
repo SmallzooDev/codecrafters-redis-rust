@@ -5,10 +5,9 @@ mod command_parser;
 mod errors;
 mod protocol_constants;
 mod rdb_parser;
-mod debug_handler;
+mod env_parser;
 
-use crate::handler::{handle_client, handle_env};
-use crate::rdb_parser::run;
+use crate::handler::{handle_client, handle_configure, handle_env};
 use crate::value_entry::ValueEntry;
 use std::collections::HashMap;
 use std::env;
@@ -23,7 +22,6 @@ type Config = Arc<RwLock<HashMap<String, String>>>;
 
 #[tokio::main]
 async fn main() {
-    let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
     let db = Arc::new(RwLock::new(HashMap::new()));
     let config = Arc::new(RwLock::new(HashMap::new()));
     let args: Vec<String> = env::args().collect();
@@ -33,12 +31,14 @@ async fn main() {
         return;
     }
 
-    // todo: add args for debug flag and exec below line optionally
-    // debug_file_structure(config.clone()).await;
+    handle_configure(db.clone(), config.clone()).await;
 
-    if let Err(e) = run(db.clone(), config.clone()).await {
-        eprintln!("Error during run: {}", e);
-    }
+    let config_read = config.read().await;
+    let port = config_read.get("port").cloned().unwrap_or_else(|| "6379".to_string());
+
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await.unwrap();
+
+    println!("Listening on port {}", port);
 
     loop {
         match listener.accept().await {
@@ -50,7 +50,7 @@ async fn main() {
                 });
             }
             Err(e) => {
-                println!("Error accepting connection : {}", e);
+                println!("Error accepting connection: {}", e);
             }
         }
     }
