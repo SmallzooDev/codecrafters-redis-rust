@@ -9,6 +9,7 @@ pub const GET_COMMAND: &str = "GET";
 pub const SET_COMMAND: &str = "SET";
 pub const CONFIG_COMMAND: &str = "CONFIG";
 pub const REPLCONF_COMMAND: &str = "REPLCONF";
+pub const PSYNC_COMMAND: &str = "PSYNC";
 
 pub const KEYS_COMMAND: &str = "KEYS";
 pub const INFO_COMMAND: &str = "INFO";

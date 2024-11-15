@@ -132,6 +132,7 @@ impl ConfigHandler {
         Ok(result)
     }
 
+    // TODO: impl real on former stage (or do this myself)
     pub async fn handshake_with_master(&self, master_host: String, master_port: String) -> Result<(), String> {
         let master_address = format!("{}:{}", master_host, master_port);
         let port = self.get_port().await;
@@ -139,13 +140,17 @@ impl ConfigHandler {
         let mut stream = TcpStream::connect(&master_address).await.map_err(|e| format!("Failed to connect to master: {}", e))?;
 
         self.send_command(&mut stream, &[PING_COMMAND]).await?;
-        self.expect_pong_response(&mut stream).await?;  // Expect PONG response
+        self.expect_pong_response(&mut stream).await?;
 
         self.send_command(&mut stream, &[REPLCONF_COMMAND, "listening-port", &port]).await?;
-        self.expect_ok_response(&mut stream).await?;  // Expect OK response
+        self.expect_ok_response(&mut stream).await?;
 
         self.send_command(&mut stream, &[REPLCONF_COMMAND, "capa", "psync2"]).await?;
-        self.expect_ok_response(&mut stream).await?;  // Expect OK response
+        self.expect_ok_response(&mut stream).await?;
+
+        self.send_command(&mut stream, &[PSYNC_COMMAND, "?", "-1"]).await?;
+
+        self.expect_fullresync_response(&mut stream).await?;
 
         Ok(())
     }
@@ -173,6 +178,19 @@ impl ConfigHandler {
         let response = String::from_utf8_lossy(&buffer[..bytes_read]);
         if response.contains(SIMPLE_STRING_PREFIX) && response.contains("OK") {
             println!("Master acknowledged command with OK");
+            Ok(())
+        } else {
+            Err(format!("Unexpected response from master: {}", response))
+        }
+    }
+
+    // TODO: impl real on former stage (or do this my self)
+    async fn expect_fullresync_response(&self, stream: &mut TcpStream) -> Result<(), String> {
+        let mut buffer = [0u8; 512];
+        let bytes_read = stream.read(&mut buffer).await.map_err(|e| format!("Failed to read FULLRESYNC response from master: {}", e))?;
+        let response = String::from_utf8_lossy(&buffer[..bytes_read]);
+        if response.contains(SIMPLE_STRING_PREFIX) && response.contains("FULLRESYNC") {
+            println!("Master responded with FULLRESYNC");
             Ok(())
         } else {
             Err(format!("Unexpected response from master: {}", response))
