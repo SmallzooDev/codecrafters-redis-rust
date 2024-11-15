@@ -26,7 +26,7 @@ type Config = Arc<RwLock<HashMap<String, String>>>;
 #[tokio::main]
 async fn main() {
     let state = StateManager::new();
-    let mut config_handler = ConfigHandler::new(state.get_db(), state.get_config(), state.get_replication_config());
+    let config_handler = ConfigHandler::new(state.get_db(), state.get_config(), state.get_replication_config());
 
     config_handler.load_config().await;
     config_handler.configure_db().await;

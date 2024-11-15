@@ -32,7 +32,7 @@ impl Command {
             Command::GET(key) => Self::execute_get(key, db).await,
             Command::SET { key, value, ex, px } => Self::execute_set(key, value, *ex, *px, db).await,
             Command::CONFIG(command) => Self::execute_config(command, config).await,
-            Command::KEYS(pattern) => Self::execute_keys(db).await,
+            Command::KEYS(_pattern) => Self::execute_keys(db).await,
             Command::INFO(section) => Self::execute_info(section, replication_config).await,
         }
     }

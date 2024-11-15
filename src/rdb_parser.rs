@@ -131,7 +131,7 @@ impl RdbParser {
             Some(self.reader.read_u64::<LittleEndian>()?)
         };
 
-        let value_type = self.reader.read_u8()?;
+        let _value_type = self.reader.read_u8()?;
 
         let key_length = self.reader.read_u8()? as usize;
         let mut key = vec![0; key_length];

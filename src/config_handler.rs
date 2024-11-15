@@ -1,9 +1,12 @@
+use crate::protocol_constants::*;
 use crate::rdb_parser::RdbParser;
 use crate::replication_config::ReplicationConfig;
 use crate::value_entry::ValueEntry;
 use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 
 pub type Db = Arc<RwLock<HashMap<String, ValueEntry>>>;
@@ -59,6 +62,10 @@ impl ConfigHandler {
         let replica_of_port = config_guard.get("replica_of_port").cloned().unwrap_or_default();
 
         if !replica_of_host.is_empty() && !replica_of_port.is_empty() {
+            if let Err(e) = self.ping_master(replica_of_host.clone(), replica_of_port.clone()).await {
+                eprintln!("configure failure with : {}", e);
+                return;
+            }
             self.replication_config.set_replica_of(replica_of_host, replica_of_port.parse::<u16>().expect("none")).await;
         }
     }
@@ -122,5 +129,35 @@ impl ConfigHandler {
         }
 
         Ok(result)
+    }
+    pub async fn ping_master(&self, master_host: String, master_port: String) -> Result<(), String> {
+        let master_address = format!("{}:{}", master_host, master_port);
+        match TcpStream::connect(&master_address).await {
+            Ok(mut stream) => {
+                let ping_command = format!(
+                    "{}1{}{}{}{}{}{}",
+                    ARRAY_PREFIX, CRLF, BULK_STRING_PREFIX, PING_COMMAND.len(), CRLF, PING_COMMAND, CRLF
+                );
+
+                if let Err(e) = stream.write_all(ping_command.as_bytes()).await {
+                    return Err(format!("Failed to send PING to master: {}", e));
+                }
+
+                let mut buffer = [0u8; 512];
+                match stream.read(&mut buffer).await {
+                    Ok(bytes_read) => {
+                        let response = String::from_utf8_lossy(&buffer[..bytes_read]);
+                        if response.contains(SIMPLE_STRING_PREFIX) && response.contains("PONG") {
+                            println!("Master responded with PONG");
+                            Ok(())
+                        } else {
+                            Err(format!("Unexpected response from master: {}", response))
+                        }
+                    }
+                    Err(e) => Err(format!("Failed to read response from master: {}", e)),
+                }
+            }
+            Err(e) => Err(format!("Failed to connect to master: {}", e)),
+        }
     }
 }

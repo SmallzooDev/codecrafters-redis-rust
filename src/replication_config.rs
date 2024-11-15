@@ -42,6 +42,7 @@ impl ReplicationConfig {
         *master_port = Some(port);
     }
 
+    #[allow(dead_code)]
     pub async fn promote_to_master(&self) {
         let mut role_guard = self.role.write().await;
         *role_guard = "master".to_string();
