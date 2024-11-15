@@ -1,6 +1,7 @@
 use crate::protocol_constants::*;
 use crate::rdb_parser::RdbParser;
 use crate::replication_config::ReplicationConfig;
+use crate::util::construct_redis_command;
 use crate::value_entry::ValueEntry;
 use std::collections::HashMap;
 use std::env;
@@ -62,7 +63,7 @@ impl ConfigHandler {
         let replica_of_port = config_guard.get("replica_of_port").cloned().unwrap_or_default();
 
         if !replica_of_host.is_empty() && !replica_of_port.is_empty() {
-            if let Err(e) = self.ping_master(replica_of_host.clone(), replica_of_port.clone()).await {
+            if let Err(e) = self.handshake_with_master(replica_of_host.clone(), replica_of_port.clone()).await {
                 eprintln!("configure failure with : {}", e);
                 return;
             }
@@ -130,34 +131,51 @@ impl ConfigHandler {
 
         Ok(result)
     }
-    pub async fn ping_master(&self, master_host: String, master_port: String) -> Result<(), String> {
+
+    pub async fn handshake_with_master(&self, master_host: String, master_port: String) -> Result<(), String> {
         let master_address = format!("{}:{}", master_host, master_port);
-        match TcpStream::connect(&master_address).await {
-            Ok(mut stream) => {
-                let ping_command = format!(
-                    "{}1{}{}{}{}{}{}",
-                    ARRAY_PREFIX, CRLF, BULK_STRING_PREFIX, PING_COMMAND.len(), CRLF, PING_COMMAND, CRLF
-                );
+        let port = self.get_port().await;
 
-                if let Err(e) = stream.write_all(ping_command.as_bytes()).await {
-                    return Err(format!("Failed to send PING to master: {}", e));
-                }
+        let mut stream = TcpStream::connect(&master_address).await.map_err(|e| format!("Failed to connect to master: {}", e))?;
 
-                let mut buffer = [0u8; 512];
-                match stream.read(&mut buffer).await {
-                    Ok(bytes_read) => {
-                        let response = String::from_utf8_lossy(&buffer[..bytes_read]);
-                        if response.contains(SIMPLE_STRING_PREFIX) && response.contains("PONG") {
-                            println!("Master responded with PONG");
-                            Ok(())
-                        } else {
-                            Err(format!("Unexpected response from master: {}", response))
-                        }
-                    }
-                    Err(e) => Err(format!("Failed to read response from master: {}", e)),
-                }
-            }
-            Err(e) => Err(format!("Failed to connect to master: {}", e)),
+        self.send_command(&mut stream, &[PING_COMMAND]).await?;
+        self.expect_pong_response(&mut stream).await?;  // Expect PONG response
+
+        self.send_command(&mut stream, &[REPLCONF_COMMAND, "listening-port", &port]).await?;
+        self.expect_ok_response(&mut stream).await?;  // Expect OK response
+
+        self.send_command(&mut stream, &[REPLCONF_COMMAND, "capa", "psync2"]).await?;
+        self.expect_ok_response(&mut stream).await?;  // Expect OK response
+
+        Ok(())
+    }
+
+    async fn send_command(&self, stream: &mut TcpStream, args: &[&str]) -> Result<(), String> {
+        let command = construct_redis_command(args);
+        stream.write_all(command.as_bytes()).await.map_err(|e| format!("Failed to send command to master: {}", e))
+    }
+
+    async fn expect_pong_response(&self, stream: &mut TcpStream) -> Result<(), String> {
+        let mut buffer = [0u8; 512];
+        let bytes_read = stream.read(&mut buffer).await.map_err(|e| format!("Failed to read PONG response from master: {}", e))?;
+        let response = String::from_utf8_lossy(&buffer[..bytes_read]);
+        if response.contains(SIMPLE_STRING_PREFIX) && response.contains("PONG") {
+            println!("Master responded with PONG");
+            Ok(())
+        } else {
+            Err(format!("Unexpected response from master: {}", response))
+        }
+    }
+
+    async fn expect_ok_response(&self, stream: &mut TcpStream) -> Result<(), String> {
+        let mut buffer = [0u8; 512];
+        let bytes_read = stream.read(&mut buffer).await.map_err(|e| format!("Failed to read OK response from master: {}", e))?;
+        let response = String::from_utf8_lossy(&buffer[..bytes_read]);
+        if response.contains(SIMPLE_STRING_PREFIX) && response.contains("OK") {
+            println!("Master acknowledged command with OK");
+            Ok(())
+        } else {
+            Err(format!("Unexpected response from master: {}", response))
         }
     }
 }

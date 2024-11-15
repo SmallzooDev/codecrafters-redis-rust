@@ -8,6 +8,7 @@ mod rdb_parser;
 mod state_manager;
 mod config_handler;
 mod replication_config;
+mod util;
 
 use crate::config_handler::ConfigHandler;
 use crate::handler::handle_client;
