@@ -1,6 +1,7 @@
 use crate::protocol_constants::*;
 use crate::replication_config::ReplicationConfig;
 use crate::{Config, Db, ValueEntry};
+use std::net::SocketAddr;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
@@ -27,40 +28,84 @@ pub enum CommandResponse {
 }
 
 impl Command {
-    pub async fn handle_command(&self, stream: &mut TcpStream, db: Db, config: Config, replication_config: ReplicationConfig) -> std::io::Result<()> {
-        let responses = self.execute(db, config, replication_config).await;
-        for response in responses {
-            match response {
-                CommandResponse::Simple(response) => {
-                    stream.write_all(response.as_bytes()).await?;
-                }
-                CommandResponse::Bulk(data) => {
-                    let header = format!("${}{}", data.len(), CRLF);
-                    stream.write_all(header.as_bytes()).await?;
-                    stream.write_all(&data).await?;
-                }
-                CommandResponse::EndStream => {
-                    break;
+    pub async fn handle_command(
+        &self,
+        stream: &mut TcpStream,
+        db: Db,
+        config: Config,
+        replication_config: ReplicationConfig,
+    ) -> std::io::Result<()> {
+        let peer_addr = match stream.peer_addr() {
+            Ok(addr) => addr,
+            Err(_) => {
+                let err_response = "-ERR Failed to retrieve client address\r\n".to_string();
+                stream.write_all(err_response.as_bytes()).await?;
+                return Ok(());
+            }
+        };
+
+        match self.execute(db, config, replication_config, peer_addr).await {
+            Ok(responses) => {
+                for response in responses {
+                    match response {
+                        CommandResponse::Simple(response) => {
+                            stream.write_all(response.as_bytes()).await?;
+                        }
+                        CommandResponse::Bulk(data) => {
+                            let header = format!("${}{}", data.len(), CRLF);
+                            stream.write_all(header.as_bytes()).await?;
+                            stream.write_all(&data).await?;
+                        }
+                        CommandResponse::EndStream => break,
+                    }
                 }
             }
+            Err(e) => {
+                let err_response = format!("-ERR {}\r\n", e);
+                stream.write_all(err_response.as_bytes()).await?;
+            }
         }
+
         Ok(())
     }
 
-    pub async fn execute(&self, db: Db, config: Config, replication_config: ReplicationConfig) -> Vec<CommandResponse> {
+    pub async fn execute(
+        &self,
+        db: Db,
+        config: Config,
+        replication_config: ReplicationConfig,
+        peer_addr: SocketAddr,
+    ) -> Result<Vec<CommandResponse>, String> {
         match self {
-            Command::PING => { vec![CommandResponse::Simple(format!("{}PONG{}", SIMPLE_STRING_PREFIX, CRLF))] }
-            Command::ECHO(echo_message) => { vec![CommandResponse::Simple(format!("{}{}{}{}{}", BULK_STRING_PREFIX, echo_message.len(), CRLF, echo_message, CRLF))] }
-            Command::GET(key) => { vec![CommandResponse::Simple(Self::execute_get(key, db).await)] }
-            Command::SET { key, value, ex, px } => { vec![CommandResponse::Simple(Self::execute_set(key, value, *ex, *px, db).await)] }
-            Command::CONFIG(command) => { vec![CommandResponse::Simple(Self::execute_config(command, config).await)] }
-            Command::KEYS(_pattern) => { vec![CommandResponse::Simple(Self::execute_keys(db).await)] }
-            Command::INFO(section) => { vec![CommandResponse::Simple(Self::execute_info(section, replication_config).await)] }
-            Command::REPLCONF(args) => {
-                println!("REPLCONF received with arguments: {:?}", args);
-                vec![CommandResponse::Simple(format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF))]
-            }
-            Command::PSYNC(args) => { Self::execute_psync(args, replication_config).await }
+            Command::PING => Ok(vec![CommandResponse::Simple(format!(
+                "{}PONG{}",
+                SIMPLE_STRING_PREFIX, CRLF
+            ))]),
+            Command::ECHO(echo_message) => Ok(vec![CommandResponse::Simple(format!(
+                "{}{}{}{}{}",
+                BULK_STRING_PREFIX,
+                echo_message.len(),
+                CRLF,
+                echo_message,
+                CRLF
+            ))]),
+            Command::GET(key) => Ok(vec![CommandResponse::Simple(
+                Self::execute_get(key, db).await,
+            )]),
+            Command::SET { key, value, ex, px } => Ok(vec![CommandResponse::Simple(
+                Self::execute_set(key, value, *ex, *px, db).await,
+            )]),
+            Command::CONFIG(command) => Ok(vec![CommandResponse::Simple(
+                Self::execute_config(command, config).await,
+            )]),
+            Command::KEYS(_pattern) => Ok(vec![CommandResponse::Simple(Self::execute_keys(db).await)]),
+            Command::INFO(section) => Ok(vec![CommandResponse::Simple(
+                Self::execute_info(section, replication_config).await,
+            )]),
+            Command::REPLCONF(args) => Ok(vec![CommandResponse::Simple(
+                Self::execute_replconf(args, peer_addr, replication_config).await,
+            )]),
+            Command::PSYNC(args) => Ok(Self::execute_psync(args, replication_config, peer_addr).await),
         }
     }
 
@@ -118,8 +163,39 @@ impl Command {
             format!("{}-1{}", BULK_STRING_PREFIX, CRLF)
         }
     }
+    pub async fn execute_replconf(
+        args: &Vec<String>,
+        peer_addr: SocketAddr,
+        replication_config: ReplicationConfig,
+    ) -> String {
+        if args[0] == "listening-port" {
+            if let Ok(port) = args[1].parse::<u16>() {
+                let addr = SocketAddr::new(peer_addr.ip(), port);
+                replication_config.register_slave(addr).await;
+                return format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF);
+            }
+        } else if args[0] == "capa" {
+            return format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF);
+        }
 
-    async fn execute_psync(args: &Vec<String>, replication_config: ReplicationConfig) -> Vec<CommandResponse> {
+        format!("-ERR Invalid REPLCONF arguments{}", CRLF)
+    }
+
+    async fn execute_psync(
+        args: &Vec<String>,
+        replication_config: ReplicationConfig,
+        peer_addr: SocketAddr,
+    ) -> Vec<CommandResponse> {
+        let slaves = replication_config.list_slaves().await;
+        if !slaves.iter().any(|slave| slave.addr.ip() == peer_addr.ip()) {
+            return vec![CommandResponse::Simple(format!(
+                "-ERR Slave not registered: {}:{}{}",
+                peer_addr.ip(),
+                peer_addr.port(),
+                CRLF
+            ))];
+        }
+
         let master_repl_id = replication_config.get_repl_id().await;
 
         let requested_offset: i64 = args
@@ -135,6 +211,7 @@ impl Command {
                 SIMPLE_STRING_PREFIX, master_repl_id, master_offset, CRLF
             );
 
+            // TODO : give real rdb file if needed
             const EMPTY_RDB_FILE: &[u8] = &[
                 0x52, 0x45, 0x44, 0x49, 0x53, 0x30, 0x30, 0x30, 0x39,
                 0xFF,
@@ -143,11 +220,10 @@ impl Command {
             vec![
                 CommandResponse::Simple(full_resync_response),
                 CommandResponse::Bulk(EMPTY_RDB_FILE.to_vec()),
-                CommandResponse::EndStream,
             ]
         } else {
             vec![CommandResponse::Simple(format!(
-                "{}TODO{}",
+                "{}CONTINUE{}",
                 SIMPLE_STRING_PREFIX, CRLF
             ))]
         }

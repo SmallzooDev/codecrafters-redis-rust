@@ -1,6 +1,7 @@
 use crate::protocol_constants::{BULK_STRING_PREFIX, CRLF};
 use rand::distr::Alphanumeric;
 use rand::Rng;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -11,6 +12,13 @@ pub struct ReplicationConfig {
     master_port: Arc<RwLock<Option<u16>>>,
     master_replid: Arc<RwLock<String>>,
     master_repl_offset: Arc<RwLock<u64>>,
+    slaves: Arc<RwLock<Vec<SlaveInfo>>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SlaveInfo {
+    pub addr: SocketAddr,
+    pub offset: i64,
 }
 
 impl ReplicationConfig {
@@ -22,6 +30,7 @@ impl ReplicationConfig {
             master_port: Arc::new(RwLock::new(None)),
             master_replid: Arc::new(RwLock::new(replid)),
             master_repl_offset: Arc::new(RwLock::new(0)),
+            slaves: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -71,8 +80,50 @@ impl ReplicationConfig {
             let master_repl_offset = *self.master_repl_offset.read().await;
             info.push_str(&format!("master_replid:{}{}", master_replid, CRLF));
             info.push_str(&format!("master_repl_offset:{}{}", master_repl_offset, CRLF));
+            let slaves = self.list_slaves().await;
+            info.push_str(&format!("connected_slaves:{}\r\n", slaves.len()));
+            for (i, slave) in slaves.iter().enumerate() {
+                info.push_str(&format!(
+                    "slave{}:ip={},port={},state=online,offset={}\r\n",
+                    i,
+                    slave.addr.ip(),
+                    slave.addr.port(),
+                    slave.offset
+                ));
+            }
         }
 
         info
+    }
+    pub async fn register_slave(&self, addr: SocketAddr) {
+        let mut slaves = self.slaves.write().await;
+        if !slaves.iter().any(|slave| slave.addr == addr) {
+            slaves.push(SlaveInfo {
+                addr,
+                offset: 0,
+            });
+            println!("Slave registered: {:?}", addr);
+        }
+    }
+
+    pub async fn update_slave_offset(&self, addr: SocketAddr, offset: i64) {
+        let mut slaves = self.slaves.write().await;
+        if let Some(slave) = slaves.iter_mut().find(|slave| slave.addr == addr) {
+            slave.offset = offset;
+        }
+    }
+
+
+    pub async fn update_slave_state(&self, addr: SocketAddr, offset: i64) {
+        let mut slaves = self.slaves.write().await;
+        if let Some(slave) = slaves.iter_mut().find(|slave| slave.addr == addr) {
+            slave.offset = offset;
+        }
+    }
+
+    pub async fn list_slaves(&self) -> Vec<SlaveInfo> {
+        let slaves = self.slaves.read().await.clone();
+        println!("Current slaves: {:?}", slaves);
+        slaves
     }
 }
