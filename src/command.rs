@@ -20,27 +20,47 @@ pub enum ConfigCommand {
     GET(String),
 }
 
+pub enum CommandResponse {
+    Simple(String),
+    Bulk(Vec<u8>),
+    EndStream,
+}
+
 impl Command {
     pub async fn handle_command(&self, stream: &mut TcpStream, db: Db, config: Config, replication_config: ReplicationConfig) -> std::io::Result<()> {
-        let response = self.execute(db, config, replication_config).await;
-        stream.write_all(response.as_bytes()).await?;
+        let responses = self.execute(db, config, replication_config).await;
+        for response in responses {
+            match response {
+                CommandResponse::Simple(response) => {
+                    stream.write_all(response.as_bytes()).await?;
+                }
+                CommandResponse::Bulk(data) => {
+                    let header = format!("${}{}", data.len(), CRLF);
+                    stream.write_all(header.as_bytes()).await?;
+                    stream.write_all(&data).await?;
+                }
+                CommandResponse::EndStream => {
+                    break;
+                }
+            }
+        }
         Ok(())
     }
 
-    pub async fn execute(&self, db: Db, config: Config, replication_config: ReplicationConfig) -> String {
+    pub async fn execute(&self, db: Db, config: Config, replication_config: ReplicationConfig) -> Vec<CommandResponse> {
         match self {
-            Command::PING => format!("{}PONG{}", SIMPLE_STRING_PREFIX, CRLF),
-            Command::ECHO(echo_message) => format!("{}{}{}{}{}", BULK_STRING_PREFIX, echo_message.len(), CRLF, echo_message, CRLF),
-            Command::GET(key) => Self::execute_get(key, db).await,
-            Command::SET { key, value, ex, px } => Self::execute_set(key, value, *ex, *px, db).await,
-            Command::CONFIG(command) => Self::execute_config(command, config).await,
-            Command::KEYS(_pattern) => Self::execute_keys(db).await,
-            Command::INFO(section) => Self::execute_info(section, replication_config).await,
+            Command::PING => { vec![CommandResponse::Simple(format!("{}PONG{}", SIMPLE_STRING_PREFIX, CRLF))] }
+            Command::ECHO(echo_message) => { vec![CommandResponse::Simple(format!("{}{}{}{}{}", BULK_STRING_PREFIX, echo_message.len(), CRLF, echo_message, CRLF))] }
+            Command::GET(key) => { vec![CommandResponse::Simple(Self::execute_get(key, db).await)] }
+            Command::SET { key, value, ex, px } => { vec![CommandResponse::Simple(Self::execute_set(key, value, *ex, *px, db).await)] }
+            Command::CONFIG(command) => { vec![CommandResponse::Simple(Self::execute_config(command, config).await)] }
+            Command::KEYS(_pattern) => { vec![CommandResponse::Simple(Self::execute_keys(db).await)] }
+            Command::INFO(section) => { vec![CommandResponse::Simple(Self::execute_info(section, replication_config).await)] }
             Command::REPLCONF(args) => {
                 println!("REPLCONF received with arguments: {:?}", args);
-                format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF)
+                vec![CommandResponse::Simple(format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF))]
             }
-            Command::PSYNC(_args) => Self::execute_psync(replication_config).await,
+            Command::PSYNC(args) => { Self::execute_psync(args, replication_config).await }
         }
     }
 
@@ -99,12 +119,37 @@ impl Command {
         }
     }
 
-    async fn execute_psync(replication_config: ReplicationConfig) -> String {
+    async fn execute_psync(args: &Vec<String>, replication_config: ReplicationConfig) -> Vec<CommandResponse> {
         let master_repl_id = replication_config.get_repl_id().await;
+
+        let requested_offset: i64 = args
+            .get(1)
+            .and_then(|offset| offset.parse::<i64>().ok())
+            .unwrap_or(-1);
+
         let master_offset = 0;
-        format!(
-            "{}FULLRESYNC {} {}{}",
-            SIMPLE_STRING_PREFIX, master_repl_id, master_offset, CRLF
-        )
+
+        if requested_offset == -1 || requested_offset < master_offset {
+            let full_resync_response = format!(
+                "{}FULLRESYNC {} {}{}",
+                SIMPLE_STRING_PREFIX, master_repl_id, master_offset, CRLF
+            );
+
+            const EMPTY_RDB_FILE: &[u8] = &[
+                0x52, 0x45, 0x44, 0x49, 0x53, 0x30, 0x30, 0x30, 0x39,
+                0xFF,
+            ];
+
+            vec![
+                CommandResponse::Simple(full_resync_response),
+                CommandResponse::Bulk(EMPTY_RDB_FILE.to_vec()),
+                CommandResponse::EndStream,
+            ]
+        } else {
+            vec![CommandResponse::Simple(format!(
+                "{}TODO{}",
+                SIMPLE_STRING_PREFIX, CRLF
+            ))]
+        }
     }
 }
