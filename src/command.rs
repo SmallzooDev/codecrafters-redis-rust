@@ -13,6 +13,7 @@ pub enum Command {
     KEYS(String),
     INFO(String),
     REPLCONF(Vec<String>),
+    PSYNC(Vec<String>),
 }
 
 pub enum ConfigCommand {
@@ -39,6 +40,7 @@ impl Command {
                 println!("REPLCONF received with arguments: {:?}", args);
                 format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF)
             }
+            Command::PSYNC(_args) => Self::execute_psync(replication_config).await,
         }
     }
 
@@ -95,5 +97,14 @@ impl Command {
         } else {
             format!("{}-1{}", BULK_STRING_PREFIX, CRLF)
         }
+    }
+
+    async fn execute_psync(replication_config: ReplicationConfig) -> String {
+        let master_repl_id = replication_config.get_repl_id().await;
+        let master_offset = 0;
+        format!(
+            "{}FULLRESYNC {} {}{}",
+            SIMPLE_STRING_PREFIX, master_repl_id, master_offset, CRLF
+        )
     }
 }

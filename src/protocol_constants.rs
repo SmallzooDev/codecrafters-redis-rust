@@ -13,6 +13,7 @@ pub const PSYNC_COMMAND: &str = "PSYNC";
 
 pub const KEYS_COMMAND: &str = "KEYS";
 pub const INFO_COMMAND: &str = "INFO";
+pub const FULLRESYNC: &str = "FULLRESYNC";
 
 pub const PX_OPTION: &str = "PX";
 pub const EX_OPTION: &str = "EX";

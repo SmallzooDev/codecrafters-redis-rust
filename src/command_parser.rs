@@ -37,6 +37,7 @@ impl CommandParser {
                     KEYS_COMMAND => Self::parse_keys(&args),
                     INFO_COMMAND => Self::parse_info(&args),
                     REPLCONF_COMMAND => Self::parse_replconf(&args),
+                    PSYNC_COMMAND => Self::parse_psync(&args),
                     _ => Err(ArgumentError::General(format!("{}: {}", UNKNOWN_COMMAND_ERROR, command_name))),
                 }
             } else {
@@ -134,5 +135,12 @@ impl CommandParser {
             return Err(ArgumentError::General(CONFIG_ARGUMENTS_ERROR.into()));
         }
         Ok(Command::REPLCONF(args[1..].to_vec()))
+    }
+
+    fn parse_psync(args: &[String]) -> Result<Command, ArgumentError> {
+        if args.len() < 3 {
+            return Err(ArgumentError::General(CONFIG_ARGUMENTS_ERROR.into()));
+        }
+        Ok(Command::PSYNC(args[1..].to_vec()))
     }
 }

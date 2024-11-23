@@ -58,6 +58,10 @@ impl ReplicationConfig {
         self.role.read().await.clone()
     }
 
+    pub async fn get_repl_id(&self) -> String {
+        self.master_replid.read().await.clone()
+    }
+
     pub async fn get_replication_info(&self) -> String {
         let role = self.get_role().await;
         let mut info = format!("{}role:{}{}", BULK_STRING_PREFIX, role, CRLF);
