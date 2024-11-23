@@ -12,6 +12,7 @@ pub enum Command {
     CONFIG(ConfigCommand),
     KEYS(String),
     INFO(String),
+    REPLCONF(Vec<String>),
 }
 
 pub enum ConfigCommand {
@@ -34,6 +35,10 @@ impl Command {
             Command::CONFIG(command) => Self::execute_config(command, config).await,
             Command::KEYS(_pattern) => Self::execute_keys(db).await,
             Command::INFO(section) => Self::execute_info(section, replication_config).await,
+            Command::REPLCONF(args) => {
+                println!("REPLCONF received with arguments: {:?}", args);
+                format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF)
+            }
         }
     }
 

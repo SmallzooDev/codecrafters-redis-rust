@@ -36,6 +36,7 @@ impl CommandParser {
                     CONFIG_COMMAND => Self::parse_config(&args),
                     KEYS_COMMAND => Self::parse_keys(&args),
                     INFO_COMMAND => Self::parse_info(&args),
+                    REPLCONF_COMMAND => Self::parse_replconf(&args),
                     _ => Err(ArgumentError::General(format!("{}: {}", UNKNOWN_COMMAND_ERROR, command_name))),
                 }
             } else {
@@ -127,5 +128,11 @@ impl CommandParser {
     fn parse_info(args: &[String]) -> Result<Command, ArgumentError> {
         Self::check_args_len(args, 2, INFO_COMMAND)?;
         Ok(Command::INFO(args[1].clone()))
+    }
+    fn parse_replconf(args: &[String]) -> Result<Command, ArgumentError> {
+        if args.len() < 3 {
+            return Err(ArgumentError::General(CONFIG_ARGUMENTS_ERROR.into()));
+        }
+        Ok(Command::REPLCONF(args[1..].to_vec()))
     }
 }
