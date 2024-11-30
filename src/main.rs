@@ -9,6 +9,8 @@ mod state_manager;
 mod config_handler;
 mod replication_config;
 mod util;
+mod ClientManager;
+mod Client;
 
 use crate::config_handler::ConfigHandler;
 use crate::handler::handle_client;
@@ -37,7 +39,6 @@ async fn main() {
     let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await.unwrap();
 
     println!("Listening on port {}", port);
-
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
