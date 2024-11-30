@@ -2,7 +2,7 @@ use crate::protocol_constants::*;
 use crate::replication_config::ReplicationConfig;
 use crate::{Config, Db, ValueEntry};
 use std::net::SocketAddr;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWriteExt, WriteHalf};
 use tokio::net::TcpStream;
 
 pub enum Command {
@@ -30,31 +30,23 @@ pub enum CommandResponse {
 impl Command {
     pub async fn handle_command(
         &self,
-        stream: &mut TcpStream,
+        writer: &mut WriteHalf<TcpStream>,
         db: Db,
         config: Config,
         replication_config: ReplicationConfig,
+        peer_addr: SocketAddr,
     ) -> std::io::Result<()> {
-        let peer_addr = match stream.peer_addr() {
-            Ok(addr) => addr,
-            Err(_) => {
-                let err_response = "-ERR Failed to retrieve client address\r\n".to_string();
-                stream.write_all(err_response.as_bytes()).await?;
-                return Ok(());
-            }
-        };
-
         match self.execute(db, config, replication_config, peer_addr).await {
             Ok(responses) => {
                 for response in responses {
                     match response {
                         CommandResponse::Simple(response) => {
-                            stream.write_all(response.as_bytes()).await?;
+                            writer.write_all(response.as_bytes()).await?;
                         }
                         CommandResponse::Bulk(data) => {
                             let header = format!("${}{}", data.len(), CRLF);
-                            stream.write_all(header.as_bytes()).await?;
-                            stream.write_all(&data).await?;
+                            writer.write_all(header.as_bytes()).await?;
+                            writer.write_all(&data).await?;
                         }
                         CommandResponse::EndStream => break,
                     }
@@ -62,10 +54,9 @@ impl Command {
             }
             Err(e) => {
                 let err_response = format!("-ERR {}\r\n", e);
-                stream.write_all(err_response.as_bytes()).await?;
+                writer.write_all(err_response.as_bytes()).await?;
             }
         }
-
         Ok(())
     }
 
