@@ -1,3 +1,4 @@
+use crate::command::Command;
 use std::net::SocketAddr;
 use tokio::net::tcp::OwnedWriteHalf;
 
@@ -13,17 +14,18 @@ pub enum RedisEvent {
 
     CommandReceived {
         client_id: u64,
-        command: String,
+        command: Command,
     },
 
     SlaveConnected {
         addr: SocketAddr,
+        writer: OwnedWriteHalf,
     },
     SlaveDisconnected {
         addr: SocketAddr,
     },
-    SlaveOffsetUpdated {
+    PropagateSlave {
         addr: SocketAddr,
-        offset: i64,
+        message: String,
     },
 } 

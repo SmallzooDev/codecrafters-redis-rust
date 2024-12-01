@@ -1,12 +1,13 @@
+use crate::event_publisher::EventPublisher;
 use crate::protocol_constants::*;
 use crate::replication_config::ReplicationConfig;
 use crate::ValueEntry;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::sync::RwLock;
-use std::sync::Arc;
 
 pub enum Command {
     PING,
@@ -90,10 +91,22 @@ impl Command {
                 )])
             }
             Command::SET { key, value, ex, px } => {
+                let role = replication_config.read().await.get_role().await;
                 let mut db = db.write().await;
-                Ok(vec![CommandResponse::Simple(
-                    Self::execute_set(key, value, *ex, *px, &mut db).await,
-                )])
+
+                if role == "slave" {
+                    let response = Self::execute_set(key, value, *ex, *px, &mut db).await;
+                    return Ok(vec![CommandResponse::Simple(response)]);
+                }
+
+                let response = Self::execute_set(key, value, *ex, *px, &mut db).await;
+
+                let replicated_command = format!(
+                    "*4\r\n$3\r\nSET\r\n${}\r\n{}\r\n${}\r\n{}\r\n",
+                    key.len(), key, value.len(), value
+                );
+
+                Ok(vec![CommandResponse::Simple(response)])
             }
             Command::CONFIG(command) => Ok(vec![CommandResponse::Simple(
                 Self::execute_config(command, config).await,
@@ -170,12 +183,13 @@ impl Command {
         args: &Vec<String>,
         peer_addr: SocketAddr,
         replication_config: &Arc<RwLock<ReplicationConfig>>,
+        publisher: &EventPublisher,
     ) -> String {
         if args[0] == "listening-port" {
             if let Ok(port) = args[1].parse::<u16>() {
                 let addr = SocketAddr::new(peer_addr.ip(), port);
-                let mut repl_config = replication_config.write().await;
-                repl_config.register_slave(addr).await;
+                publisher.publish_slave_connected(addr).await
+                    .map_err(|e| format!("Failed to publish slave connected event: {}", e))?;
                 return format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF);
             }
         } else if args[0] == "capa" {

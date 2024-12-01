@@ -1,4 +1,3 @@
-use crate::command_parser::CommandParser;
 use crate::event::RedisEvent;
 use crate::redis_client::Client;
 use crate::replication_config::ReplicationConfig;
@@ -6,6 +5,7 @@ use crate::value_entry::ValueEntry;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio::io::AsyncWriteExt;
 
 pub struct EventHandler {
     db: Arc<RwLock<HashMap<String, ValueEntry>>>,
@@ -43,37 +43,38 @@ impl EventHandler {
 
             RedisEvent::CommandReceived { client_id, command } => {
                 if let Some(client) = self.clients.get_mut(&client_id) {
-                    println!("Received command: {}", command);
                     let addr = client.get_addr();
-                    match CommandParser::parse_message(&command) {
-                        Ok(cmd) => {
-                            println!("Parsed command successfully");
-                            let writer = client.get_writer();
-                            if let Err(e) = cmd.handle_command(
-                                writer,
-                                &self.db,
-                                &self.config,
-                                &self.replication_config,
-                                addr,
-                            ).await {
-                                eprintln!("Error handling command: {}", e);
-                            }
-                        }
-                        Err(e) => eprintln!("Error parsing command: {}", e),
+                    let writer = client.get_writer();
+                    if let Err(e) = command.handle_command(
+                        writer,
+                        &self.db,
+                        &self.config,
+                        &self.replication_config,
+                        addr,
+                    ).await {
+                        eprintln!("Error handling command: {}", e);
                     }
                 }
             }
 
-            RedisEvent::SlaveConnected { addr } => {
-                self.replication_config.write().await.register_slave(addr).await;
+            RedisEvent::SlaveConnected { addr, writer } => {
+                println!("New slave connected: {}", addr);
+                self.replication_config.write().await.register_slave(addr, writer).await;
             }
 
             RedisEvent::SlaveDisconnected { addr } => {
                 println!("Slave disconnected: {}", addr);
             }
 
-            RedisEvent::SlaveOffsetUpdated { addr, offset } => {
-                self.replication_config.write().await.update_slave_offset(addr, offset).await;
+            // TODO: 메세지 전파 부분 작업중
+            RedisEvent::PropagateSlave { addr, message } => {
+                let repl_guard = self.replication_config.write().await;
+                let mut slaves = repl_guard.get_slaves_mut().await;
+                for slave in slaves.iter_mut() {
+                    if let Err(e) = slave.writer.write_all(message.as_bytes()).await {
+                        eprintln!("Failed to propagate message to slave {}: {}", slave.addr, e);
+                    }
+                }
             }
         }
     }

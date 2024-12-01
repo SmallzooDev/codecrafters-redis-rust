@@ -1,3 +1,4 @@
+use crate::command::Command;
 use crate::event::RedisEvent;
 use std::net::SocketAddr;
 use tokio::net::tcp::OwnedWriteHalf;
@@ -13,7 +14,7 @@ impl EventPublisher {
         Self { tx }
     }
 
-    pub async fn publish_command(&self, client_id: u64, command: String) -> Result<(), String> {
+    pub async fn publish_command(&self, client_id: u64, command: Command) -> Result<(), String> {
         self.tx.send(RedisEvent::CommandReceived {
             client_id,
             command,
@@ -38,5 +39,11 @@ impl EventPublisher {
         })
             .await
             .map_err(|e| format!("Failed to send client disconnected event: {}", e))
+    }
+
+    pub async fn publish_slave_connected(&self, addr: SocketAddr, writer: OwnedWriteHalf) -> Result<(), String> {
+        self.tx.send(RedisEvent::SlaveConnected { addr, writer })
+            .await
+            .map_err(|e| format!("Failed to send slave connected event: {}", e))
     }
 } 

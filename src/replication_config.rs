@@ -4,6 +4,7 @@ use rand::Rng;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio::net::tcp::OwnedWriteHalf;
 
 #[derive(Clone)]
 pub struct ReplicationConfig {
@@ -15,10 +16,11 @@ pub struct ReplicationConfig {
     slaves: Arc<RwLock<Vec<SlaveInfo>>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct SlaveInfo {
     pub addr: SocketAddr,
     pub offset: i64,
+    pub writer: OwnedWriteHalf,
 }
 
 impl ReplicationConfig {
@@ -95,14 +97,14 @@ impl ReplicationConfig {
 
         info
     }
-    pub async fn register_slave(&self, addr: SocketAddr) {
+    pub async fn register_slave(&self, addr: SocketAddr, writer: OwnedWriteHalf) {
         let mut slaves = self.slaves.write().await;
         if !slaves.iter().any(|slave| slave.addr == addr) {
             slaves.push(SlaveInfo {
                 addr,
                 offset: 0,
+                writer,
             });
-            println!("Slave registered: {:?}", addr);
         }
     }
 
@@ -121,9 +123,11 @@ impl ReplicationConfig {
         }
     }
 
-    pub async fn list_slaves(&self) -> Vec<SlaveInfo> {
-        let slaves = self.slaves.read().await.clone();
-        println!("Current slaves: {:?}", slaves);
-        slaves
+    pub async fn list_slaves(&self) -> tokio::sync::RwLockReadGuard<'_, Vec<SlaveInfo>> {
+        self.slaves.read().await
+    }
+
+    pub async fn get_slaves_mut(&self) -> tokio::sync::RwLockWriteGuard<'_, Vec<SlaveInfo>> {
+        self.slaves.write().await
     }
 }

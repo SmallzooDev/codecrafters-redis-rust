@@ -14,6 +14,7 @@ mod event;
 mod event_handler;
 mod event_publisher;
 
+use crate::command_parser::CommandParser;
 use crate::config_handler::ConfigHandler;
 use crate::event::RedisEvent;
 use crate::event_handler::EventHandler;
@@ -72,12 +73,14 @@ async fn main() {
             }
 
             tokio::spawn(async move {
+                // TODO: buffer 읽기가 끝나는 것을 보장하도록 수정
                 let mut buffer = [0u8; 512];
                 loop {
                     match read_stream.read(&mut buffer).await {
                         Ok(n) if n > 0 => {
                             let command = String::from_utf8_lossy(&buffer[..n]).to_string();
-                            if let Err(e) = publisher.publish_command(client_id, command).await {
+                            let parsed_command = CommandParser::parse_message(&command).unwrap();
+                            if let Err(e) = publisher.publish_command(client_id, parsed_command).await {
                                 eprintln!("Failed to publish command: {}", e);
                                 break;
                             }
