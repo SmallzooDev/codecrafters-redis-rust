@@ -41,9 +41,15 @@ impl EventPublisher {
             .map_err(|e| format!("Failed to send client disconnected event: {}", e))
     }
 
-    pub async fn publish_slave_connected(&self, addr: SocketAddr, writer: OwnedWriteHalf) -> Result<(), String> {
-        self.tx.send(RedisEvent::SlaveConnected { addr, writer })
+    pub async fn publish_slave_connected(&self, addr: SocketAddr) -> Result<(), String> {
+        self.tx.send(RedisEvent::SlaveConnected { addr})
             .await
             .map_err(|e| format!("Failed to send slave connected event: {}", e))
+    }
+
+    pub async fn publish_propagate_slave(&self, addr: SocketAddr, message: String) -> Result<(), String> {
+        self.tx.send(RedisEvent::PropagateSlave { addr, message })
+            .await
+            .map_err(|e| format!("Failed to send propagate slave event: {}", e))
     }
 } 

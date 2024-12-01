@@ -19,7 +19,6 @@ pub enum RedisEvent {
 
     SlaveConnected {
         addr: SocketAddr,
-        writer: OwnedWriteHalf,
     },
     SlaveDisconnected {
         addr: SocketAddr,

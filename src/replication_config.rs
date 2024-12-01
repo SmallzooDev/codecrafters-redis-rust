@@ -20,7 +20,6 @@ pub struct ReplicationConfig {
 pub struct SlaveInfo {
     pub addr: SocketAddr,
     pub offset: i64,
-    pub writer: OwnedWriteHalf,
 }
 
 impl ReplicationConfig {
@@ -97,13 +96,12 @@ impl ReplicationConfig {
 
         info
     }
-    pub async fn register_slave(&self, addr: SocketAddr, writer: OwnedWriteHalf) {
+    pub async fn register_slave(&self, addr: SocketAddr) {
         let mut slaves = self.slaves.write().await;
         if !slaves.iter().any(|slave| slave.addr == addr) {
             slaves.push(SlaveInfo {
                 addr,
                 offset: 0,
-                writer,
             });
         }
     }

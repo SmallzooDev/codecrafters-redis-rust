@@ -23,4 +23,8 @@ impl ClientManager {
     pub fn get_client(&self, client_id: u64) -> Option<&Client> {
         self.clients.get(&client_id)
     }
+
+    pub fn get_client_mut(&mut self, client_id: &u64) -> Option<&mut Client> {
+        self.clients.get_mut(client_id)
+    }
 }

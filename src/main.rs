@@ -48,21 +48,22 @@ async fn main() {
 
     let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await.unwrap();
     let (tx, mut rx) = mpsc::channel::<RedisEvent>(32);
+    let tx_clone = tx.clone();
+    let publisher = EventPublisher::new(tx_clone.clone());
 
     let mut event_handler = EventHandler::new(
         state.get_db(),
         state.get_config(),
         state.get_replication_config(),
+        publisher.clone(),
     );
 
     println!("Listening on port {}", port);
 
 
-    let tx_clone = tx.clone();
-    let publisher = EventPublisher::new(tx_clone.clone());
-
     let accept_task = tokio::spawn(async move {
         while let Ok((stream, addr)) = listener.accept().await {
+            //TODO : client_id 리팩토링
             let client_id = addr.port() as u64;
             let (mut read_stream, write_stream) = stream.into_split();
 

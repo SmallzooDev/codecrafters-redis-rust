@@ -39,8 +39,9 @@ impl Command {
         config: &Arc<RwLock<HashMap<String, String>>>,
         replication_config: &Arc<RwLock<ReplicationConfig>>,
         peer_addr: SocketAddr,
+        publisher: &EventPublisher,
     ) -> std::io::Result<()> {
-        match self.execute(db, config, replication_config, peer_addr).await {
+        match self.execute(db, config, replication_config, peer_addr, publisher).await {
             Ok(responses) => {
                 for response in responses {
                     match response {
@@ -70,6 +71,7 @@ impl Command {
         config: &Arc<RwLock<HashMap<String, String>>>,
         replication_config: &Arc<RwLock<ReplicationConfig>>,
         peer_addr: SocketAddr,
+        publisher: &EventPublisher,
     ) -> Result<Vec<CommandResponse>, String> {
         match self {
             Command::PING => Ok(vec![CommandResponse::Simple(format!(
@@ -106,6 +108,9 @@ impl Command {
                     key.len(), key, value.len(), value
                 );
 
+                publisher.publish_propagate_slave(peer_addr, replicated_command).await
+                    .map_err(|e| format!("Failed to propagate command to slaves: {}", e))?;
+
                 Ok(vec![CommandResponse::Simple(response)])
             }
             Command::CONFIG(command) => Ok(vec![CommandResponse::Simple(
@@ -116,7 +121,7 @@ impl Command {
                 Self::execute_info(section, replication_config).await,
             )]),
             Command::REPLCONF(args) => Ok(vec![CommandResponse::Simple(
-                Self::execute_replconf(args, peer_addr, replication_config).await,
+                Self::execute_replconf(args, peer_addr, publisher).await,
             )]),
             Command::PSYNC(args) => Ok(Self::execute_psync(args, replication_config, peer_addr).await),
         }
@@ -182,14 +187,14 @@ impl Command {
     pub async fn execute_replconf(
         args: &Vec<String>,
         peer_addr: SocketAddr,
-        replication_config: &Arc<RwLock<ReplicationConfig>>,
         publisher: &EventPublisher,
     ) -> String {
         if args[0] == "listening-port" {
             if let Ok(port) = args[1].parse::<u16>() {
                 let addr = SocketAddr::new(peer_addr.ip(), port);
-                publisher.publish_slave_connected(addr).await
-                    .map_err(|e| format!("Failed to publish slave connected event: {}", e))?;
+                if let Err(e) = publisher.publish_slave_connected(addr).await {
+                    return format!("-ERR Failed to register slave: {}{}", e, CRLF);
+                }
                 return format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF);
             }
         } else if args[0] == "capa" {
