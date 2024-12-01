@@ -34,11 +34,11 @@ impl Client {
         &mut self.writer
     }
 
-    pub async fn increment_request_count(&mut self) {
+    pub fn increment_request_count(&mut self) {
         self.request_count += 1;
     }
 
-    pub async fn get_request_count(&mut self) -> u64 {
+    pub fn get_request_count(&self) -> u64 {
         self.request_count
     }
 
