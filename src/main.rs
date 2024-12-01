@@ -9,7 +9,7 @@ mod config_handler;
 mod replication_config;
 mod util;
 mod client_manager;
-mod client;
+mod redis_client;
 mod event;
 mod event_handler;
 mod event_publisher;

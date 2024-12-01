@@ -6,11 +6,11 @@ use std::net::SocketAddr;
 #[derive(Debug)]
 pub struct Client {
     pub id: u64,
-    reader: ReadHalf<TcpStream>,
-    writer: WriteHalf<TcpStream>,
+    pub reader: ReadHalf<TcpStream>,
+    pub writer: WriteHalf<TcpStream>,
     pub connected_at: Instant,
     pub request_count: u64,
-    addr: SocketAddr,
+    pub addr: SocketAddr,
 }
 
 impl Client {

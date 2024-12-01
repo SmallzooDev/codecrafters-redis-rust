@@ -1,4 +1,4 @@
-use crate::client::Client;
+use crate::redis_client::Client;
 use crate::command_parser::CommandParser;
 use crate::event::RedisEvent;
 use crate::replication_config::ReplicationConfig;
