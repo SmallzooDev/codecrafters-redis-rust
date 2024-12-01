@@ -1,6 +1,6 @@
-use crate::redis_client::Client;
 use crate::command_parser::CommandParser;
 use crate::event::RedisEvent;
+use crate::redis_client::Client;
 use crate::replication_config::ReplicationConfig;
 use crate::value_entry::ValueEntry;
 use std::collections::HashMap;
@@ -30,9 +30,9 @@ impl EventHandler {
 
     pub async fn handle_event(&mut self, event: RedisEvent) {
         match event {
-            RedisEvent::ClientConnected { client_id, stream, addr } => {
+            RedisEvent::ClientConnected { client_id, writer, addr } => {
                 println!("New client connected: {}", client_id);
-                let client = Client::new(client_id, stream, addr);
+                let client = Client::new(client_id, writer, addr);
                 self.clients.insert(client_id, client);
             }
 
@@ -43,9 +43,11 @@ impl EventHandler {
 
             RedisEvent::CommandReceived { client_id, command } => {
                 if let Some(client) = self.clients.get_mut(&client_id) {
+                    println!("Received command: {}", command);
                     let addr = client.get_addr();
                     match CommandParser::parse_message(&command) {
                         Ok(cmd) => {
+                            println!("Parsed command successfully");
                             let writer = client.get_writer();
                             if let Err(e) = cmd.handle_command(
                                 writer,

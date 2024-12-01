@@ -3,8 +3,8 @@ use crate::replication_config::ReplicationConfig;
 use crate::ValueEntry;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use tokio::io::{AsyncWriteExt, WriteHalf};
-use tokio::net::TcpStream;
+use tokio::io::AsyncWriteExt;
+use tokio::net::tcp::OwnedWriteHalf;
 use tokio::sync::RwLock;
 use std::sync::Arc;
 
@@ -33,7 +33,7 @@ pub enum CommandResponse {
 impl Command {
     pub async fn handle_command(
         &self,
-        writer: &mut WriteHalf<TcpStream>,
+        writer: &mut OwnedWriteHalf,
         db: &Arc<RwLock<HashMap<String, ValueEntry>>>,
         config: &Arc<RwLock<HashMap<String, String>>>,
         replication_config: &Arc<RwLock<ReplicationConfig>>,

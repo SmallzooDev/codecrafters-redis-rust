@@ -17,11 +17,12 @@ mod event_publisher;
 use crate::config_handler::ConfigHandler;
 use crate::event::RedisEvent;
 use crate::event_handler::EventHandler;
+use crate::event_publisher::EventPublisher;
 use crate::state_manager::StateManager;
 use crate::value_entry::ValueEntry;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-
 
 #[tokio::main]
 async fn main() {
@@ -55,23 +56,42 @@ async fn main() {
 
     println!("Listening on port {}", port);
 
-    let event_handler_task = tokio::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            event_handler.handle_event(event).await;
-        }
-    });
 
     let tx_clone = tx.clone();
+    let publisher = EventPublisher::new(tx_clone.clone());
+
     let accept_task = tokio::spawn(async move {
         while let Ok((stream, addr)) = listener.accept().await {
             let client_id = addr.port() as u64;
-            if let Err(e) = tx_clone.send(RedisEvent::ClientConnected {
-                client_id,
-                stream,
-                addr,
-            }).await {
+            let (mut read_stream, write_stream) = stream.into_split();
+
+            let publisher = publisher.clone();
+            if let Err(e) = publisher.publish_client_connected(client_id, write_stream, addr).await {
                 eprintln!("Failed to send client connected event: {}", e);
+                continue;
             }
+
+            tokio::spawn(async move {
+                let mut buffer = [0u8; 512];
+                loop {
+                    match read_stream.read(&mut buffer).await {
+                        Ok(n) if n > 0 => {
+                            let command = String::from_utf8_lossy(&buffer[..n]).to_string();
+                            if let Err(e) = publisher.publish_command(client_id, command).await {
+                                eprintln!("Failed to publish command: {}", e);
+                                break;
+                            }
+                        }
+                        _ => break,
+                    }
+                }
+            });
+        }
+    });
+
+    let event_handler_task = tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            event_handler.handle_event(event).await;
         }
     });
 
