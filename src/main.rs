@@ -8,36 +8,44 @@ mod state_manager;
 mod config_handler;
 mod replication_config;
 mod util;
-mod ClientManager;
-mod Client;
+mod client_manager;
+mod client;
 mod event;
 mod event_handler;
+mod event_publisher;
 
 use crate::config_handler::ConfigHandler;
 use crate::event::RedisEvent;
 use crate::event_handler::EventHandler;
 use crate::state_manager::StateManager;
 use crate::value_entry::ValueEntry;
-use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use tokio::sync::RwLock;
-
-type Db = Arc<RwLock<HashMap<String, ValueEntry>>>;
-type Config = Arc<RwLock<HashMap<String, String>>>;
 
 
 #[tokio::main]
 async fn main() {
     let state = StateManager::new();
-    let config_handler = ConfigHandler::new(state.get_db(), state.get_config(), state.get_replication_config());
 
-    config_handler.load_config().await;
-    config_handler.configure_db().await;
-    config_handler.configure_replication().await;
+    {
+        let mut config_handler = ConfigHandler::new(
+            state.get_db(),
+            state.get_config(),
+            state.get_replication_config(),
+        );
+        config_handler.load_config().await;
+        config_handler.configure_db().await;
+        config_handler.configure_replication().await;
+    }
 
-    let port = config_handler.get_port().await;
+    let port = {
+        let config_lock = state.get_config();
+        let config = config_lock.read().await;
+        config.get("port")
+            .and_then(|p| p.parse::<u16>().ok())
+            .unwrap_or(6379)
+    };
+
     let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await.unwrap();
     let (tx, mut rx) = mpsc::channel::<RedisEvent>(32);
 

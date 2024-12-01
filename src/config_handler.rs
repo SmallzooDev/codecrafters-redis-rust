@@ -5,32 +5,40 @@ use crate::util::construct_redis_command;
 use crate::value_entry::ValueEntry;
 use std::collections::HashMap;
 use std::env;
-use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
+use std::sync::Arc;
 
-pub type Db = Arc<RwLock<HashMap<String, ValueEntry>>>;
-pub type Config = Arc<RwLock<HashMap<String, String>>>;
+pub type Db = HashMap<String, ValueEntry>;
+pub type Config = HashMap<String, String>;
 
 pub struct ConfigHandler {
-    db: Db,
-    config: Config,
-    replication_config: ReplicationConfig,
+    db: Arc<RwLock<HashMap<String, ValueEntry>>>,
+    config: Arc<RwLock<HashMap<String, String>>>,
+    replication_config: Arc<RwLock<ReplicationConfig>>,
 }
 
 impl ConfigHandler {
-    pub fn new(db: Db, config: Config, replication_config: ReplicationConfig) -> Self {
-        Self { db, config, replication_config }
+    pub fn new(
+        db: Arc<RwLock<HashMap<String, ValueEntry>>>,
+        config: Arc<RwLock<HashMap<String, String>>>,
+        replication_config: Arc<RwLock<ReplicationConfig>>,
+    ) -> Self {
+        Self { 
+            db, 
+            config, 
+            replication_config 
+        }
     }
 
     pub async fn load_config(&self) {
         let args: Vec<String> = env::args().collect();
         match ConfigHandler::parse_env(args) {
             Ok(result) => {
-                let mut config_guard = self.config.write().await;
+                let mut config = self.config.write().await;
                 for (key, value) in result {
-                    config_guard.insert(key, value);
+                    config.insert(key, value);
                 }
                 println!("Configuration loaded.");
             }
@@ -40,39 +48,38 @@ impl ConfigHandler {
         }
     }
 
-    pub async fn configure_db(&self) {
-        let config_guard = self.config.read().await;
-        let dir = config_guard.get("dir").cloned().unwrap_or_default();
-        let db_file_name = config_guard.get("file_name").cloned().unwrap_or_default();
+    pub async fn configure_db(&mut self) {
+        let dir = self.config.read().await.get("dir").cloned().unwrap_or_default();
+        let db_file_name = self.config.read().await.get("file_name").cloned().unwrap_or_default();
 
         if !dir.is_empty() && !db_file_name.is_empty() {
             let rdb_file_path = format!("{}/{}", dir, db_file_name);
-            if let Ok(mut parser) = RdbParser::new(self.db.clone(), &rdb_file_path) {
+            let mut db_guard = self.db.write().await;
+            if let Ok(mut parser) = RdbParser::new(&mut *db_guard, &rdb_file_path) {
                 if let Err(e) = parser.parse().await {
                     eprintln!("Error during RDB parsing: {}", e);
                 }
-            } else {
-                eprintln!("Failed to initialize RDB parser.");
             }
         }
     }
 
     pub async fn configure_replication(&self) {
-        let config_guard = self.config.read().await;
-        let replica_of_host = config_guard.get("replica_of_host").cloned().unwrap_or_default();
-        let replica_of_port = config_guard.get("replica_of_port").cloned().unwrap_or_default();
+        let replica_of_host = self.config.read().await.get("replica_of_host").cloned().unwrap_or_default();
+        let replica_of_port = self.config.read().await.get("replica_of_port").cloned().unwrap_or_default();
 
         if !replica_of_host.is_empty() && !replica_of_port.is_empty() {
             if let Err(e) = self.handshake_with_master(replica_of_host.clone(), replica_of_port.clone()).await {
                 eprintln!("configure failure with : {}", e);
                 return;
             }
-            self.replication_config.set_replica_of(replica_of_host, replica_of_port.parse::<u16>().expect("none")).await;
+            self.replication_config.write().await.set_replica_of(replica_of_host, replica_of_port.parse::<u16>().expect("none")).await;
         }
     }
 
-    pub async fn get_port(&self) -> String {
-        self.config.read().await.get("port").cloned().unwrap_or_else(|| "6379".to_string())
+    pub async fn get_port(&self) -> u16 {
+        self.config.read().await.get("port")
+            .and_then(|p| p.parse::<u16>().ok())
+            .unwrap_or(6379)
     }
 
     fn parse_env(args: Vec<String>) -> Result<Vec<(String, String)>, String> {
@@ -142,7 +149,7 @@ impl ConfigHandler {
         self.send_command(&mut stream, &[PING_COMMAND]).await?;
         self.expect_pong_response(&mut stream).await?;
 
-        self.send_command(&mut stream, &[REPLCONF_COMMAND, "listening-port", &port]).await?;
+        self.send_command(&mut stream, &[REPLCONF_COMMAND, "listening-port", &port.to_string()]).await?;
         self.expect_ok_response(&mut stream).await?;
 
         self.send_command(&mut stream, &[REPLCONF_COMMAND, "capa", "psync2"]).await?;

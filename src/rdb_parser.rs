@@ -1,17 +1,18 @@
 use crate::protocol_constants::{MAGIC_NUMBER, OPCODE_EOF, OPCODE_META, OPCODE_START_DB};
-use crate::{Db, ValueEntry};
+use crate::ValueEntry;
 use byteorder::{LittleEndian, ReadBytesExt};
 use crc::{Crc, CRC_64_ECMA_182};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 
-pub struct RdbParser {
+pub struct RdbParser<'a> {
     reader: BufReader<File>,
-    db: Db,
+    db: &'a mut HashMap<String, ValueEntry>,
 }
 
-impl RdbParser {
-    pub fn new(db: Db, rdb_file_path: &str) -> io::Result<Self> {
+impl<'a> RdbParser<'a> {
+    pub fn new(db: &'a mut HashMap<String, ValueEntry>, rdb_file_path: &str) -> io::Result<Self> {
         let file = File::open(rdb_file_path)?;
         let reader = BufReader::new(file);
         Ok(Self { reader, db })
@@ -144,7 +145,7 @@ impl RdbParser {
         let value_str = String::from_utf8_lossy(&value).to_string();
 
         let entry = ValueEntry::new_absolute(value_str.clone(), expiration_ms);
-        self.db.write().await.insert(key_str.clone(), entry);
+        self.db.insert(key_str.clone(), entry);
         println!("Inserted key: {} with value: {} and expiration: {:?}", key_str, value_str, expiration_ms);
         Ok(())
     }
@@ -163,7 +164,7 @@ impl RdbParser {
         let value_str = String::from_utf8_lossy(&value).to_string();
 
         let entry = ValueEntry::new_absolute(value_str.clone(), None);
-        self.db.write().await.insert(key_str.clone(), entry);
+        self.db.insert(key_str.clone(), entry);
         println!("Inserted key: {} with value: {} without expiration", key_str, value_str);
         Ok(())
     }

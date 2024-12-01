@@ -1,9 +1,12 @@
 use crate::protocol_constants::*;
 use crate::replication_config::ReplicationConfig;
-use crate::{Config, Db, ValueEntry};
+use crate::ValueEntry;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use tokio::io::{AsyncWriteExt, WriteHalf};
 use tokio::net::TcpStream;
+use tokio::sync::RwLock;
+use std::sync::Arc;
 
 pub enum Command {
     PING,
@@ -31,9 +34,9 @@ impl Command {
     pub async fn handle_command(
         &self,
         writer: &mut WriteHalf<TcpStream>,
-        db: Db,
-        config: Config,
-        replication_config: ReplicationConfig,
+        db: &Arc<RwLock<HashMap<String, ValueEntry>>>,
+        config: &Arc<RwLock<HashMap<String, String>>>,
+        replication_config: &Arc<RwLock<ReplicationConfig>>,
         peer_addr: SocketAddr,
     ) -> std::io::Result<()> {
         match self.execute(db, config, replication_config, peer_addr).await {
@@ -62,9 +65,9 @@ impl Command {
 
     pub async fn execute(
         &self,
-        db: Db,
-        config: Config,
-        replication_config: ReplicationConfig,
+        db: &Arc<RwLock<HashMap<String, ValueEntry>>>,
+        config: &Arc<RwLock<HashMap<String, String>>>,
+        replication_config: &Arc<RwLock<ReplicationConfig>>,
         peer_addr: SocketAddr,
     ) -> Result<Vec<CommandResponse>, String> {
         match self {
@@ -80,12 +83,18 @@ impl Command {
                 echo_message,
                 CRLF
             ))]),
-            Command::GET(key) => Ok(vec![CommandResponse::Simple(
-                Self::execute_get(key, db).await,
-            )]),
-            Command::SET { key, value, ex, px } => Ok(vec![CommandResponse::Simple(
-                Self::execute_set(key, value, *ex, *px, db).await,
-            )]),
+            Command::GET(key) => {
+                let db = db.read().await;
+                Ok(vec![CommandResponse::Simple(
+                    Self::execute_get(key, &db).await,
+                )])
+            }
+            Command::SET { key, value, ex, px } => {
+                let mut db = db.write().await;
+                Ok(vec![CommandResponse::Simple(
+                    Self::execute_set(key, value, *ex, *px, &mut db).await,
+                )])
+            }
             Command::CONFIG(command) => Ok(vec![CommandResponse::Simple(
                 Self::execute_config(command, config).await,
             )]),
@@ -100,8 +109,8 @@ impl Command {
         }
     }
 
-    async fn execute_get(key: &String, db: Db) -> String {
-        match db.read().await.get(key) {
+    async fn execute_get(key: &String, db: &HashMap<String, ValueEntry>) -> String {
+        match db.get(key) {
             Some(value_entry) => {
                 if value_entry.is_expired() {
                     format!("{}-1{}", BULK_STRING_PREFIX, CRLF)
@@ -113,21 +122,22 @@ impl Command {
         }
     }
 
-    async fn execute_set(key: &String, value: &String, ex: Option<u64>, px: Option<u64>, db: Db) -> String {
+    async fn execute_set(key: &String, value: &String, ex: Option<u64>, px: Option<u64>, db: &mut HashMap<String, ValueEntry>) -> String {
         let expiration_ms = match (px, ex) {
             (Some(ms), _) => Some(ms),
             (None, Some(s)) => Some(s * 1000),
             _ => None,
         };
 
-        db.write().await.insert(key.clone(), ValueEntry::new_relative(value.clone(), expiration_ms));
+        db.insert(key.clone(), ValueEntry::new_relative(value.clone(), expiration_ms));
         format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF)
     }
 
-    async fn execute_config(command: &ConfigCommand, config: Config) -> String {
+    async fn execute_config(command: &ConfigCommand, config: &Arc<RwLock<HashMap<String, String>>>) -> String {
         match command {
             ConfigCommand::GET(key) => {
-                match config.read().await.get(key.as_str()) {
+                let config = config.read().await;
+                match config.get(key.as_str()) {
                     Some(value) => {
                         format!("{}2{}{}{}{}{}{}{}{}{}{}{}", ARRAY_PREFIX, CRLF, BULK_STRING_PREFIX, key.len(), CRLF, key, CRLF, BULK_STRING_PREFIX, value.len(), CRLF, value, CRLF)
                     }
@@ -137,8 +147,9 @@ impl Command {
         }
     }
 
-    async fn execute_keys(db: Db) -> String {
-        let keys: Vec<String> = db.read().await.keys().cloned().collect();
+    async fn execute_keys(db: &Arc<RwLock<HashMap<String, ValueEntry>>>) -> String {
+        let db = db.read().await;
+        let keys: Vec<String> = db.keys().cloned().collect();
         let mut response = format!("*{}\r\n", keys.len());
         for key in keys {
             response.push_str(&format!("${}\r\n{}\r\n", key.len(), key));
@@ -146,8 +157,9 @@ impl Command {
         response
     }
 
-    async fn execute_info(section: &String, replication_config: ReplicationConfig) -> String {
+    async fn execute_info(section: &String, replication_config: &Arc<RwLock<ReplicationConfig>>) -> String {
         if section.to_lowercase() == "replication" {
+            let replication_config = replication_config.read().await;
             let replication_info = replication_config.get_replication_info().await;
             format!("${}\r\n{}\r\n", replication_info.len(), replication_info)
         } else {
@@ -157,12 +169,13 @@ impl Command {
     pub async fn execute_replconf(
         args: &Vec<String>,
         peer_addr: SocketAddr,
-        replication_config: ReplicationConfig,
+        replication_config: &Arc<RwLock<ReplicationConfig>>,
     ) -> String {
         if args[0] == "listening-port" {
             if let Ok(port) = args[1].parse::<u16>() {
                 let addr = SocketAddr::new(peer_addr.ip(), port);
-                replication_config.register_slave(addr).await;
+                let mut repl_config = replication_config.write().await;
+                repl_config.register_slave(addr).await;
                 return format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF);
             }
         } else if args[0] == "capa" {
@@ -174,10 +187,11 @@ impl Command {
 
     async fn execute_psync(
         args: &Vec<String>,
-        replication_config: ReplicationConfig,
+        replication_config: &Arc<RwLock<ReplicationConfig>>,
         peer_addr: SocketAddr,
     ) -> Vec<CommandResponse> {
-        let slaves = replication_config.list_slaves().await;
+        let repl_config = replication_config.read().await;
+        let slaves = repl_config.list_slaves().await;
         if !slaves.iter().any(|slave| slave.addr.ip() == peer_addr.ip()) {
             return vec![CommandResponse::Simple(format!(
                 "-ERR Slave not registered: {}:{}{}",
@@ -187,7 +201,7 @@ impl Command {
             ))];
         }
 
-        let master_repl_id = replication_config.get_repl_id().await;
+        let master_repl_id = replication_config.read().await.get_repl_id().await;
 
         let requested_offset: i64 = args
             .get(1)
