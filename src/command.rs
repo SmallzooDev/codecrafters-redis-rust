@@ -104,8 +104,11 @@ impl Command {
                 let response = Self::execute_set(key, value, *ex, *px, &mut db).await;
 
                 let replicated_command = format!(
-                    "*4\r\n$3\r\nSET\r\n${}\r\n{}\r\n${}\r\n{}\r\n",
-                    key.len(), key, value.len(), value
+                    "*3\r\n$3\r\nSET\r\n${}\r\n{}\r\n${}\r\n{}\r\n",
+                    key.len(),
+                    key,
+                    value.len(),
+                    value
                 );
 
                 publisher.publish_propagate_slave(peer_addr, replicated_command).await

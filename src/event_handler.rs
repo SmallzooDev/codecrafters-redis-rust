@@ -73,16 +73,21 @@ impl EventHandler {
             }
 
             RedisEvent::PropagateSlave { addr, message } => {
+                println!("Propagating message to slaves: {}", message);
                 let repl_guard = self.replication_config.read().await;
                 let slaves = repl_guard.list_slaves().await;
                 
                 for slave in slaves.iter() {
                     let client_id = slave.addr.port() as u64;
+                    println!("Trying to propagate to slave with client_id: {}", client_id);
                     
                     if let Some(client) = self.client_manager.get_client_mut(&client_id) {
+                        println!("Found client, sending message");
                         if let Err(e) = client.get_writer().write_all(message.as_bytes()).await {
                             eprintln!("Failed to propagate message to slave {}: {}", slave.addr, e);
                         }
+                    } else {
+                        println!("No client found for slave: {}", slave.addr);
                     }
                 }
             }
