@@ -111,7 +111,7 @@ impl Command {
                     value
                 );
 
-                publisher.publish_propagate_slave(peer_addr, replicated_command).await
+                publisher.publish_propagate_slave(replicated_command).await
                     .map_err(|e| format!("Failed to propagate command to slaves: {}", e))?;
 
                 Ok(vec![CommandResponse::Simple(response)])

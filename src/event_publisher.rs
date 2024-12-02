@@ -47,8 +47,8 @@ impl EventPublisher {
             .map_err(|e| format!("Failed to send slave connected event: {}", e))
     }
 
-    pub async fn publish_propagate_slave(&self, addr: SocketAddr, message: String) -> Result<(), String> {
-        self.tx.send(RedisEvent::PropagateSlave { addr, message })
+    pub async fn publish_propagate_slave(&self, message: String) -> Result<(), String> {
+        self.tx.send(RedisEvent::PropagateSlave { message })
             .await
             .map_err(|e| format!("Failed to send propagate slave event: {}", e))
     }
