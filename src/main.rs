@@ -21,7 +21,7 @@ use crate::event_handler::EventHandler;
 use crate::event_publisher::EventPublisher;
 use crate::state_manager::StateManager;
 use crate::value_entry::ValueEntry;
-use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
