@@ -192,18 +192,15 @@ impl Command {
         peer_addr: SocketAddr,
         publisher: &EventPublisher,
     ) -> String {
+        // TODO: 요구사항에는, --listening-port로 전파하는 것처럼 되어있지만 실제로는 그렇지 않아 리팩토링 필요
         if args[0] == "listening-port" {
-            if let Ok(port) = args[1].parse::<u16>() {
-                let slave_addr = SocketAddr::new(peer_addr.ip(), port);
-                if let Err(e) = publisher.publish_slave_connected(slave_addr).await {
-                    return format!("-ERR Failed to register slave: {}{}", e, CRLF);
-                }
-                return format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF);
+            if let Err(e) = publisher.publish_slave_connected(peer_addr).await {
+                return format!("-ERR Failed to register slave: {}{}", e, CRLF);
             }
+            return format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF);
         } else if args[0] == "capa" {
             return format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF);
         }
-
         format!("-ERR Invalid REPLCONF arguments{}", CRLF)
     }
 

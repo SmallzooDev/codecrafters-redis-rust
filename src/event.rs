@@ -24,7 +24,6 @@ pub enum RedisEvent {
         addr: SocketAddr,
     },
     PropagateSlave {
-        addr: SocketAddr,
         message: String,
     },
 } 

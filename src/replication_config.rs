@@ -4,7 +4,6 @@ use rand::Rng;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio::net::tcp::OwnedWriteHalf;
 
 #[derive(Clone)]
 pub struct ReplicationConfig {
