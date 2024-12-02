@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::io::AsyncWriteExt;
 use crate::client_manager::ClientManager;
+use std::net::TcpStream;
 
 pub struct EventHandler {
     db: Arc<RwLock<HashMap<String, ValueEntry>>>,
@@ -65,7 +66,24 @@ impl EventHandler {
 
             RedisEvent::SlaveConnected { addr } => {
                 println!("New slave connected: {}", addr);
-                self.replication_config.write().await.register_slave(addr).await;
+                
+                if self.client_manager.get_client_mut(&(addr.port() as u64)).is_some() {
+                    println!("Client already exists for slave: {}", addr);
+                    self.replication_config.write().await.register_slave(addr).await;
+                    return;
+                }
+                
+                match tokio::net::TcpStream::connect(addr).await {
+                    Ok(stream) => {
+                        let (_, writer) = stream.into_split();
+                        let client = Client::new(addr.port() as u64, writer, addr);
+                        self.client_manager.add_client(addr.port() as u64, client);
+                        self.replication_config.write().await.register_slave(addr).await;
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to connect to slave {}: {}", addr, e);
+                    }
+                }
             }
 
             RedisEvent::SlaveDisconnected { addr } => {

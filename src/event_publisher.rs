@@ -42,7 +42,7 @@ impl EventPublisher {
     }
 
     pub async fn publish_slave_connected(&self, addr: SocketAddr) -> Result<(), String> {
-        self.tx.send(RedisEvent::SlaveConnected { addr})
+        self.tx.send(RedisEvent::SlaveConnected { addr })
             .await
             .map_err(|e| format!("Failed to send slave connected event: {}", e))
     }

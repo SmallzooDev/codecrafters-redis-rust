@@ -126,7 +126,7 @@ impl Command {
             Command::REPLCONF(args) => Ok(vec![CommandResponse::Simple(
                 Self::execute_replconf(args, peer_addr, publisher).await,
             )]),
-            Command::PSYNC(args) => Ok(Self::execute_psync(args, replication_config, peer_addr).await),
+            Command::PSYNC(args) => Ok(Self::execute_psync(args, replication_config).await),
         }
     }
 
@@ -194,8 +194,8 @@ impl Command {
     ) -> String {
         if args[0] == "listening-port" {
             if let Ok(port) = args[1].parse::<u16>() {
-                let addr = SocketAddr::new(peer_addr.ip(), port);
-                if let Err(e) = publisher.publish_slave_connected(addr).await {
+                let slave_addr = SocketAddr::new(peer_addr.ip(), port);
+                if let Err(e) = publisher.publish_slave_connected(slave_addr).await {
                     return format!("-ERR Failed to register slave: {}{}", e, CRLF);
                 }
                 return format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF);
@@ -210,21 +210,8 @@ impl Command {
     async fn execute_psync(
         args: &Vec<String>,
         replication_config: &Arc<RwLock<ReplicationConfig>>,
-        peer_addr: SocketAddr,
     ) -> Vec<CommandResponse> {
-        let repl_config = replication_config.read().await;
-        let slaves = repl_config.list_slaves().await;
-        if !slaves.iter().any(|slave| slave.addr.ip() == peer_addr.ip()) {
-            return vec![CommandResponse::Simple(format!(
-                "-ERR Slave not registered: {}:{}{}",
-                peer_addr.ip(),
-                peer_addr.port(),
-                CRLF
-            ))];
-        }
-
         let master_repl_id = replication_config.read().await.get_repl_id().await;
-
         let requested_offset: i64 = args
             .get(1)
             .and_then(|offset| offset.parse::<i64>().ok())
