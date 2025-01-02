@@ -239,4 +239,17 @@ impl Command {
             ))]
         }
     }
+
+    pub async fn execute_without_response(
+        &self,
+        db: &mut HashMap<String, ValueEntry>,
+    ) -> Result<(), String> {
+        match self {
+            Command::SET { key, value, ex, px } => {
+                Self::execute_set(key, value, *ex, *px, db).await;
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
 }

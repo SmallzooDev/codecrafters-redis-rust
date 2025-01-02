@@ -47,18 +47,21 @@ impl EventHandler {
             }
 
             RedisEvent::CommandReceived { client_id, command } => {
-                if let Some(client) = self.client_manager.get_client_mut(&client_id) {
-                    let addr = client.get_addr();
-                    let writer = client.get_writer();
+                if client_id == 0 {
+                    let mut db = self.db.write().await;
+                    if let Err(e) = command.execute_without_response(&mut db).await {
+                        eprintln!("Failed to execute command from master: {}", e);
+                    }
+                } else if let Some(client) = self.client_manager.get_client_mut(&client_id) {
                     if let Err(e) = command.handle_command(
-                        writer,
+                        &mut client.writer,
                         &self.db,
                         &self.config,
                         &self.replication_config,
-                        addr,
+                        client.addr,
                         &self.publisher,
                     ).await {
-                        eprintln!("Error handling command: {}", e);
+                        eprintln!("Failed to handle command: {}", e);
                     }
                 }
             }

@@ -91,6 +91,14 @@ impl ReplicationConfig {
                     slave.offset
                 ));
             }
+        } else if role == "slave" {
+            let master_host = self.master_host.read().await;
+            let master_port = self.master_port.read().await;
+            if let (Some(host), Some(port)) = (master_host.as_ref(), master_port.as_ref()) {
+                info.push_str(&format!("master_host:{}{}", host, CRLF));
+                info.push_str(&format!("master_port:{}{}", port, CRLF));
+                info.push_str(&format!("master_link_status:up{}", CRLF));
+            }
         }
 
         info

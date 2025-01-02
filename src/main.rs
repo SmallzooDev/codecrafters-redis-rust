@@ -29,14 +29,18 @@ use tokio::sync::mpsc;
 async fn main() {
     let state = StateManager::new();
 
+    let (tx, mut rx) = mpsc::channel::<RedisEvent>(32);
+    let tx_clone = tx.clone();
+    let publisher = EventPublisher::new(tx_clone.clone());
+
     let mut config_handler = ConfigHandler::new(
         state.get_db(),
         state.get_config(),
         state.get_replication_config(),
+        publisher.clone(),
     );
     config_handler.load_config().await;
     config_handler.configure_db().await;
-    config_handler.configure_replication().await;
 
     let port = {
         let config_lock = state.get_config();
@@ -47,9 +51,7 @@ async fn main() {
     };
 
     let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await.unwrap();
-    let (tx, mut rx) = mpsc::channel::<RedisEvent>(32);
-    let tx_clone = tx.clone();
-    let publisher = EventPublisher::new(tx_clone.clone());
+    println!("Listening on port {}", port);
 
     let mut event_handler = EventHandler::new(
         state.get_db(),
@@ -58,8 +60,11 @@ async fn main() {
         publisher.clone(),
     );
 
-    println!("Listening on port {}", port);
-
+    let event_handler_task = tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            event_handler.handle_event(event).await;
+        }
+    });
 
     let accept_task = tokio::spawn(async move {
         while let Ok((stream, addr)) = listener.accept().await {
@@ -93,11 +98,7 @@ async fn main() {
         }
     });
 
-    let event_handler_task = tokio::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            event_handler.handle_event(event).await;
-        }
-    });
+    config_handler.configure_replication().await;
 
     tokio::try_join!(event_handler_task, accept_task).unwrap();
 }
