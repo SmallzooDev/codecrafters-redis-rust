@@ -165,44 +165,53 @@ impl ConfigHandler {
         self.expect_fullresync_response(&mut read_stream).await?;
 
         let mut buffer = [0u8; 1024];
-        let mut size_buffer = String::new();
-        let mut byte = [0u8; 1];
-
-        // $ 문자 읽기
-        read_stream.read_exact(&mut byte).await.map_err(|e| format!("Failed to read RDB size prefix: {}", e))?;
-        if byte[0] != b'$' {
-            return Err("Expected $ prefix for RDB size".to_string());
-        }
-
-        // 크기 읽기
-        loop {
-            read_stream.read_exact(&mut byte).await.map_err(|e| format!("Failed to read RDB size: {}", e))?;
-            if byte[0] == b'\r' {
-                read_stream.read_exact(&mut byte).await.map_err(|e| format!("Failed to read RDB size: {}", e))?;
-                if byte[0] == b'\n' {
-                    break;
-                }
-            }
-            size_buffer.push(byte[0] as char);
-        }
-
-        let rdb_size: usize = size_buffer.parse()
-            .map_err(|e| format!("Failed to parse RDB size: {}", e))?;
-
-        println!("Reading RDB file of size: {}", rdb_size);
-
-        let mut rdb_data = vec![0u8; rdb_size];
         let mut total_bytes = 0;
-        while total_bytes < rdb_size {
-            let bytes_read = read_stream.read(&mut rdb_data[total_bytes..]).await
+        let mut rdb_size = 0;
+        let mut reading_size = true;
+        let mut size_str = String::new();
+
+        loop {
+            let bytes_read = read_stream.read(&mut buffer).await
                 .map_err(|e| format!("Failed to read RDB data: {}", e))?;
+            
             if bytes_read == 0 {
                 return Err("Unexpected EOF while reading RDB data".to_string());
             }
-            total_bytes += bytes_read;
-        }
 
-        println!("Read {} bytes of RDB data", total_bytes);
+            if reading_size {
+                for i in 0..bytes_read {
+                    let byte = buffer[i];
+                    if byte == b'\r' {
+                        if i + 1 < bytes_read && buffer[i + 1] == b'\n' {
+                            rdb_size = size_str.parse()
+                                .map_err(|e| format!("Failed to parse RDB size: {}", e))?;
+                            total_bytes = bytes_read - (i + 2);
+                            if total_bytes > 0 {
+                                // 남은 데이터가 있다면 처리
+                                println!("Reading RDB file of size: {}", rdb_size);
+                                if total_bytes >= rdb_size {
+                                    println!("Read {} bytes of RDB data", rdb_size);
+                                    break;
+                                }
+                            }
+                            reading_size = false;
+                            break;
+                        }
+                    } else if byte != b'$' {
+                        size_str.push(byte as char);
+                    }
+                }
+                if reading_size {
+                    continue;
+                }
+            } else {
+                total_bytes += bytes_read;
+                if total_bytes >= rdb_size {
+                    println!("Read {} bytes of RDB data", rdb_size);
+                    break;
+                }
+            }
+        }
 
         self.replication_config.write().await.set_replica_of(master_host.clone(), master_port.parse::<u16>().expect("none")).await;
 
