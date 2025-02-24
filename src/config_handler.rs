@@ -1,4 +1,3 @@
-use crate::command::Command;
 use crate::command_parser::CommandParser;
 use crate::event_publisher::EventPublisher;
 use crate::protocol_constants::*;
@@ -7,11 +6,14 @@ use crate::replication_config::ReplicationConfig;
 use crate::util::construct_redis_command;
 use crate::value_entry::ValueEntry;
 use std::collections::HashMap;
-use std::env;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpStream, tcp::{OwnedReadHalf, OwnedWriteHalf}};
-use tokio::sync::RwLock;
+use std::io::Cursor;
 use std::sync::Arc;
+use std::env;
+use tokio::fs::File;
+use tokio::io::BufReader;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{tcp::{OwnedReadHalf, OwnedWriteHalf}, TcpStream};
+use tokio::sync::RwLock;
 
 pub type Db = HashMap<String, ValueEntry>;
 pub type Config = HashMap<String, String>;
@@ -30,9 +32,9 @@ impl ConfigHandler {
         replication_config: Arc<RwLock<ReplicationConfig>>,
         publisher: EventPublisher,
     ) -> Self {
-        Self { 
-            db, 
-            config, 
+        Self {
+            db,
+            config,
             replication_config,
             publisher,
         }
@@ -60,10 +62,19 @@ impl ConfigHandler {
 
         if !dir.is_empty() && !db_file_name.is_empty() {
             let rdb_file_path = format!("{}/{}", dir, db_file_name);
-            let mut db_guard = self.db.write().await;
-            if let Ok(mut parser) = RdbParser::new(&mut *db_guard, &rdb_file_path) {
-                if let Err(e) = parser.parse().await {
-                    eprintln!("Error during RDB parsing: {}", e);
+
+            match File::open(&rdb_file_path).await {
+                Ok(file) => {
+                    let reader = BufReader::new(file);
+                    let mut db_guard = self.db.write().await;
+                    let mut parser = RdbParser::new(reader, &mut *db_guard);
+
+                    if let Err(e) = parser.parse().await {
+                        eprintln!("Error during RDB parsing: {}", e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to open Rdb file: {}", e);
                 }
             }
         }
@@ -149,9 +160,11 @@ impl ConfigHandler {
         let master_address = format!("{}:{}", master_host, master_port);
         let port = self.get_port().await;
 
-        let stream = TcpStream::connect(&master_address).await.map_err(|e| format!("Failed to connect to master: {}", e))?;
+        let stream = TcpStream::connect(&master_address).await
+            .map_err(|e| format!("Failed to connect to master: {}", e))?;
         let (mut read_stream, mut write_stream) = stream.into_split();
 
+        // 초기 핸드셰이크 단계는 그대로 유지
         self.send_command_with_writer(&mut write_stream, &[PING_COMMAND]).await?;
         self.expect_pong_response(&mut read_stream).await?;
 
@@ -164,67 +177,75 @@ impl ConfigHandler {
         self.send_command_with_writer(&mut write_stream, &[PSYNC_COMMAND, "?", "-1"]).await?;
         self.expect_fullresync_response(&mut read_stream).await?;
 
-        let mut buffer = [0u8; 1024];
-        let mut total_bytes = 0;
-        let mut rdb_size = 0;
-        let mut reading_size = true;
+        // RDB 사이즈 읽기
         let mut size_str = String::new();
+        let mut reading_size = true;
+        let mut rdb_size = 0;
 
-        loop {
-            let bytes_read = read_stream.read(&mut buffer).await
-                .map_err(|e| format!("Failed to read RDB data: {}", e))?;
-            
-            if bytes_read == 0 {
-                return Err("Unexpected EOF while reading RDB data".to_string());
-            }
+        // $ 마커 이후 크기 정보 읽기
+        while reading_size {
+            let mut byte = [0u8; 1];
+            read_stream.read_exact(&mut byte).await
+                .map_err(|e| format!("Failed to read RDB size byte: {}", e))?;
 
-            if reading_size {
-                for i in 0..bytes_read {
-                    let byte = buffer[i];
-                    if byte == b'\r' {
-                        if i + 1 < bytes_read && buffer[i + 1] == b'\n' {
-                            rdb_size = size_str.parse()
-                                .map_err(|e| format!("Failed to parse RDB size: {}", e))?;
-                            total_bytes = bytes_read - (i + 2);
-                            if total_bytes > 0 {
-                                // 남은 데이터가 있다면 처리
-                                println!("Reading RDB file of size: {}", rdb_size);
-                                if total_bytes >= rdb_size {
-                                    println!("Read {} bytes of RDB data", rdb_size);
-                                    break;
-                                }
-                            }
-                            reading_size = false;
-                            break;
-                        }
-                    } else if byte != b'$' {
-                        size_str.push(byte as char);
+            match byte[0] {
+                b'$' => continue,  // $ 마커는 건너뜀
+                b'\r' => {
+                    // \r\n 확인
+                    let mut lf = [0u8; 1];
+                    read_stream.read_exact(&mut lf).await
+                        .map_err(|e| format!("Failed to read LF after CR: {}", e))?;
+
+                    if lf[0] == b'\n' {
+                        // 크기 문자열을 숫자로 파싱
+                        rdb_size = size_str.parse::<usize>()
+                            .map_err(|e| format!("Failed to parse RDB size: {}", e))?;
+                        println!("RDB size: {} bytes", rdb_size);
+                        reading_size = false;
+                    } else {
+                        return Err("Invalid RDB size format".to_string());
                     }
                 }
-                if reading_size {
-                    continue;
-                }
-            } else {
-                total_bytes += bytes_read;
-                if total_bytes >= rdb_size {
-                    println!("Read {} bytes of RDB data", rdb_size);
-                    break;
-                }
+                // 숫자 문자 추가
+                _ => size_str.push(byte[0] as char)
             }
         }
 
-        self.replication_config.write().await.set_replica_of(master_host.clone(), master_port.parse::<u16>().expect("none")).await;
+        // RDB 데이터를 모두 읽음
+        let mut rdb_buffer = vec![0u8; rdb_size];
+        read_stream.read_exact(&mut rdb_buffer).await
+            .map_err(|e| format!("Failed to read RDB data: {}", e))?;
 
+        // 버퍼를 처리
+        {
+            let cursor = Cursor::new(rdb_buffer);
+            let reader = tokio::io::BufReader::new(cursor);
+            let mut db_guard = self.db.write().await;
+            let mut parser = RdbParser::new(reader, &mut *db_guard);
+
+            if let Err(e) = parser.parse().await {
+                return Err(format!("Failed to parse RDB data: {}", e));
+            }
+        }
+
+        // 복제 설정 업데이트
+        self.replication_config.write().await.set_replica_of(
+            master_host.clone(),
+            master_port.parse::<u16>().expect("none"),
+        ).await;
+
+        // 복제 스트림 모니터링을 위한 별도 태스크 생성
         let publisher = self.publisher.clone();
         tokio::spawn(async move {
             let mut buffer = Vec::new();
             let mut temp_buffer = [0u8; 1024];
-            
+
             loop {
+                // 기존 복제 스트림 모니터링 코드 유지
                 match read_stream.read(&mut temp_buffer).await {
                     Ok(n) if n > 0 => {
                         buffer.extend_from_slice(&temp_buffer[..n]);
-                        
+
                         let mut pos = 0;
                         while pos < buffer.len() {
                             if buffer[pos] == b'*' {
