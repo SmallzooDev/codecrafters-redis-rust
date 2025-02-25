@@ -1,13 +1,11 @@
 use crate::event_publisher::EventPublisher;
 use crate::protocol_constants::*;
 use crate::replication_config::ReplicationConfig;
-use crate::ValueEntry;
+use crate::value_entry::ValueEntry;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::OwnedWriteHalf;
-use tokio::sync::RwLock;
 
 pub enum Command {
     PING,
@@ -40,16 +38,13 @@ impl Command {
     pub async fn handle_command(
         &self,
         writer: &mut OwnedWriteHalf,
-        db: &Arc<RwLock<HashMap<String, ValueEntry>>>,
-        config: &Arc<RwLock<HashMap<String, String>>>,
-        replication_config: &Arc<RwLock<ReplicationConfig>>,
+        db: &mut HashMap<String, ValueEntry>,
+        config: &mut HashMap<String, String>,
+        replication_config: &mut ReplicationConfig,
         peer_addr: SocketAddr,
         publisher: &EventPublisher,
     ) -> std::io::Result<()> {
-        match self
-            .execute(db, config, replication_config, peer_addr, publisher)
-            .await
-        {
+        match self.execute(db, config, replication_config, peer_addr, publisher).await {
             Ok(responses) => {
                 for response in responses {
                     match response {
@@ -75,9 +70,9 @@ impl Command {
 
     pub async fn execute(
         &self,
-        db: &Arc<RwLock<HashMap<String, ValueEntry>>>,
-        config: &Arc<RwLock<HashMap<String, String>>>,
-        replication_config: &Arc<RwLock<ReplicationConfig>>,
+        db: &mut HashMap<String, ValueEntry>,
+        config: &mut HashMap<String, String>,
+        replication_config: &mut ReplicationConfig,
         peer_addr: SocketAddr,
         publisher: &EventPublisher,
     ) -> Result<Vec<CommandResponse>, String> {
@@ -94,22 +89,15 @@ impl Command {
                 echo_message,
                 CRLF
             ))]),
-            Command::GET(key) => {
-                let db = db.read().await;
-                Ok(vec![CommandResponse::Simple(
-                    Self::execute_get(key, &db).await,
-                )])
-            }
+            Command::GET(key) => Ok(vec![CommandResponse::Simple(Self::execute_get(key, db))]),
             Command::SET { key, value, ex, px } => {
-                let role = replication_config.read().await.get_role().await;
-                let mut db = db.write().await;
-
+                let role = replication_config.get_role();
                 if role == "slave" {
-                    let response = Self::execute_set(key, value, *ex, *px, &mut db).await;
+                    let response = Self::execute_set(key, value, *ex, *px, db);
                     return Ok(vec![CommandResponse::Simple(response)]);
                 }
 
-                let response = Self::execute_set(key, value, *ex, *px, &mut db).await;
+                let response = Self::execute_set(key, value, *ex, *px, db);
 
                 let replicated_command = format!(
                     "*3\r\n$3\r\nSET\r\n${}\r\n{}\r\n${}\r\n{}\r\n",
@@ -127,94 +115,83 @@ impl Command {
                 Ok(vec![CommandResponse::Simple(response)])
             }
             Command::CONFIG(command) => Ok(vec![CommandResponse::Simple(
-                Self::execute_config(command, config).await,
+                Self::execute_config(command, config),
             )]),
-            Command::KEYS(_pattern) => {
-                Ok(vec![CommandResponse::Simple(Self::execute_keys(db).await)])
-            }
+            Command::KEYS(_pattern) => Ok(vec![CommandResponse::Simple(Self::execute_keys(db))]),
             Command::INFO(section) => Ok(vec![CommandResponse::Simple(
-                Self::execute_info(section, replication_config).await,
+                Self::execute_info(section, replication_config),
             )]),
             Command::REPLCONF(args) => Ok(vec![CommandResponse::Simple(
                 Self::execute_replconf(args, peer_addr, publisher).await,
             )]),
-            Command::PSYNC(args) => Ok(Self::execute_psync(args, replication_config).await),
+            Command::PSYNC(args) => Ok(Self::execute_psync(args, replication_config)),
         }
     }
 
-    async fn execute_get(key: &String, db: &HashMap<String, ValueEntry>) -> String {
+    fn execute_get(key: &str, db: &HashMap<String, ValueEntry>) -> String {
         match db.get(key) {
-            Some(value_entry) => {
-                if value_entry.is_expired() {
-                    format!("{}-1{}", BULK_STRING_PREFIX, CRLF)
+            Some(entry) => {
+                if entry.is_expired() {
+                    format!("{}$-1{}", BULK_STRING_PREFIX, CRLF)
                 } else {
                     format!(
                         "{}{}{}{}{}",
                         BULK_STRING_PREFIX,
-                        value_entry.value.len(),
+                        entry.value.len(),
                         CRLF,
-                        value_entry.value,
+                        entry.value,
                         CRLF
                     )
                 }
             }
-            None => format!("{}-1{}", BULK_STRING_PREFIX, CRLF),
+            None => format!("{}$-1{}", BULK_STRING_PREFIX, CRLF),
         }
     }
 
-    async fn execute_set(
-        key: &String,
-        value: &String,
+    fn execute_set(
+        key: &str,
+        value: &str,
         ex: Option<u64>,
         px: Option<u64>,
         db: &mut HashMap<String, ValueEntry>,
     ) -> String {
-        let expiration_ms = match (px, ex) {
-            (Some(ms), _) => Some(ms),
-            (None, Some(s)) => Some(s * 1000),
-            _ => None,
+        let expiration_ms = if let Some(ex) = ex {
+            Some(ex * 1000)
+        } else {
+            px
         };
 
         db.insert(
-            key.clone(),
-            ValueEntry::new_relative(value.clone(), expiration_ms),
+            key.to_string(),
+            ValueEntry::new_relative(value.to_string(), expiration_ms),
         );
         format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF)
     }
 
-    async fn execute_config(
-        command: &ConfigCommand,
-        config: &Arc<RwLock<HashMap<String, String>>>,
-    ) -> String {
+    fn execute_config(command: &ConfigCommand, config: &HashMap<String, String>) -> String {
         match command {
-            ConfigCommand::GET(key) => {
-                let config = config.read().await;
-                match config.get(key.as_str()) {
-                    Some(value) => {
-                        format!(
-                            "{}2{}{}{}{}{}{}{}{}{}{}{}",
-                            ARRAY_PREFIX,
-                            CRLF,
-                            BULK_STRING_PREFIX,
-                            key.len(),
-                            CRLF,
-                            key,
-                            CRLF,
-                            BULK_STRING_PREFIX,
-                            value.len(),
-                            CRLF,
-                            value,
-                            CRLF
-                        )
-                    }
-                    None => format!("{}-1{}", BULK_STRING_PREFIX, CRLF),
-                }
-            }
+            ConfigCommand::GET(key) => match config.get(key.as_str()) {
+                Some(value) => format!(
+                    "{}2{}{}{}{}{}{}{}{}{}{}{}",
+                    ARRAY_PREFIX,
+                    CRLF,
+                    BULK_STRING_PREFIX,
+                    key.len(),
+                    CRLF,
+                    key,
+                    CRLF,
+                    BULK_STRING_PREFIX,
+                    value.len(),
+                    CRLF,
+                    value,
+                    CRLF
+                ),
+                None => format!("{}-1{}", BULK_STRING_PREFIX, CRLF),
+            },
         }
     }
 
-    async fn execute_keys(db: &Arc<RwLock<HashMap<String, ValueEntry>>>) -> String {
-        let db = db.read().await;
+    fn execute_keys(db: &HashMap<String, ValueEntry>) -> String {
         let keys: Vec<String> = db.keys().cloned().collect();
         let mut response = format!("*{}\r\n", keys.len());
         for key in keys {
@@ -223,24 +200,20 @@ impl Command {
         response
     }
 
-    async fn execute_info(
-        section: &String,
-        replication_config: &Arc<RwLock<ReplicationConfig>>,
-    ) -> String {
+    fn execute_info(section: &str, replication_config: &ReplicationConfig) -> String {
         if section.to_lowercase() == "replication" {
-            let replication_config = replication_config.read().await;
-            let replication_info = replication_config.get_replication_info().await;
+            let replication_info = replication_config.get_info();
             format!("${}\r\n{}\r\n", replication_info.len(), replication_info)
         } else {
             format!("{}-1{}", BULK_STRING_PREFIX, CRLF)
         }
     }
-    pub async fn execute_replconf(
-        args: &Vec<String>,
+
+    async fn execute_replconf(
+        args: &[String],
         peer_addr: SocketAddr,
         publisher: &EventPublisher,
     ) -> String {
-        // TODO: 요구사항에는, --listening-port로 전파하는 것처럼 되어있지만 실제로는 그렇지 않아 리팩토링 필요
         if args[0] == "listening-port" {
             if let Err(e) = publisher.publish_slave_connected(peer_addr).await {
                 return format!("-ERR Failed to register slave: {}{}", e, CRLF);
@@ -249,18 +222,13 @@ impl Command {
         } else if args[0] == "capa" {
             return format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF);
         } else if args[0].to_lowercase() == "getack" {
-            // todo
-            print!("got some replconf ack req");
             return format!("*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$1\r\n0\r\n");
         }
         format!("-ERR Invalid REPLCONF arguments{}", CRLF)
     }
 
-    async fn execute_psync(
-        args: &Vec<String>,
-        replication_config: &Arc<RwLock<ReplicationConfig>>,
-    ) -> Vec<CommandResponse> {
-        let master_repl_id = replication_config.read().await.get_repl_id().await;
+    fn execute_psync(args: &[String], replication_config: &ReplicationConfig) -> Vec<CommandResponse> {
+        let master_repl_id = replication_config.get_master_replid();
         let requested_offset: i64 = args
             .get(1)
             .and_then(|offset| offset.parse::<i64>().ok())
@@ -274,7 +242,6 @@ impl Command {
                 SIMPLE_STRING_PREFIX, master_repl_id, master_offset, CRLF
             );
 
-            // TODO : give real rdb file if needed
             const EMPTY_RDB_FILE: &[u8] =
                 &[0x52, 0x45, 0x44, 0x49, 0x53, 0x30, 0x30, 0x30, 0x39, 0xFF];
 
@@ -287,19 +254,6 @@ impl Command {
                 "{}CONTINUE{}",
                 SIMPLE_STRING_PREFIX, CRLF
             ))]
-        }
-    }
-
-    pub async fn execute_without_response(
-        &self,
-        db: &mut HashMap<String, ValueEntry>,
-    ) -> Result<(), String> {
-        match self {
-            Command::SET { key, value, ex, px } => {
-                Self::execute_set(key, value, *ex, *px, db).await;
-                Ok(())
-            }
-            _ => Ok(()),
         }
     }
 }

@@ -20,43 +20,74 @@ use crate::event::RedisEvent;
 use crate::event_handler::EventHandler;
 use crate::event_publisher::EventPublisher;
 use crate::state_manager::StateManager;
-use crate::value_entry::ValueEntry;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
+use std::process;
 
 #[tokio::main]
 async fn main() {
-    let state = StateManager::new();
+    let mut state = StateManager::new();
 
     let (tx, mut rx) = mpsc::channel::<RedisEvent>(32);
     let tx_clone = tx.clone();
     let publisher = EventPublisher::new(tx_clone.clone());
 
     let mut config_handler = ConfigHandler::new(
-        state.get_db(),
-        state.get_config(),
-        state.get_replication_config(),
+        state.take_db(),
+        state.take_config(),
+        state.take_replication_config(),
         publisher.clone(),
     );
-    config_handler.load_config().await;
+    config_handler.load_config();
     config_handler.configure_db().await;
 
-    let port = {
-        let config_lock = state.get_config();
-        let config = config_lock.read().await;
-        config.get("port")
-            .and_then(|p| p.parse::<u16>().ok())
-            .unwrap_or(6379)
+    println!("Configuring replication...");
+    config_handler.configure_replication().await;
+
+    println!("Current config before restore:");
+    for (key, value) in config_handler.get_config() {
+        println!("  {} = {}", key, value);
+    }
+
+    state.restore_db(config_handler.take_db());
+    state.restore_config(config_handler.take_config());
+    state.restore_replication_config(config_handler.take_replication_config());
+
+    println!("State config after restore:");
+    if let Some(config) = state.get_config() {
+        for (key, value) in config {
+            println!("  {} = {}", key, value);
+        }
+    } else {
+        println!("  No config found in state!");
+    }
+
+    let port = state.get_config_value("port")
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(6379);
+
+    println!("Selected port for binding: {}", port);
+
+    let bind_addr = format!("127.0.0.1:{}", port);
+    println!("Attempting to bind to {}", bind_addr);
+    
+    let listener = match TcpListener::bind(&bind_addr).await {
+        Ok(listener) => {
+            println!("Successfully listening on port {}", port);
+            listener
+        }
+        Err(e) => {
+            eprintln!("Failed to bind to {}: {}", bind_addr, e);
+            eprintln!("Failed to bind to port {}: {}", port, e);
+            process::exit(1);
+        }
     };
 
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await.unwrap();
-    println!("Listening on port {}", port);
-
     let mut event_handler = EventHandler::new(
-        state.get_db(),
-        state.get_config(),
-        state.get_replication_config(),
+        state.take_db(),
+        state.take_config(),
+        state.take_replication_config(),
         publisher.clone(),
     );
 
@@ -68,7 +99,6 @@ async fn main() {
 
     let accept_task = tokio::spawn(async move {
         while let Ok((stream, addr)) = listener.accept().await {
-            //TODO : client_id 리팩토링
             let client_id = addr.port() as u64;
             let (mut read_stream, write_stream) = stream.into_split();
 
@@ -79,28 +109,38 @@ async fn main() {
             }
 
             tokio::spawn(async move {
-                // TODO: buffer 읽기가 끝나는 것을 보장하도록 수정
                 let mut buffer = [0u8; 512];
                 loop {
                     match read_stream.read(&mut buffer).await {
                         Ok(n) if n > 0 => {
                             let command = String::from_utf8_lossy(&buffer[..n]).to_string();
-                            let parsed_command = CommandParser::parse_message(&command).unwrap();
+                            let parsed_command = match CommandParser::parse_message(&command) {
+                                Ok(cmd) => cmd,
+                                Err(e) => {
+                                    eprintln!("Failed to parse command: {}", e);
+                                    continue;
+                                }
+                            };
                             if let Err(e) = publisher.publish_command(client_id, parsed_command).await {
                                 eprintln!("Failed to publish command: {}", e);
                                 break;
                             }
                         }
-                        _ => break,
+                        Ok(_) => break,
+                        Err(e) => {
+                            eprintln!("Failed to read from client: {}", e);
+                            break;
+                        }
                     }
                 }
             });
         }
     });
 
-    config_handler.configure_replication().await;
-
-    tokio::try_join!(event_handler_task, accept_task).unwrap();
+    if let Err(e) = tokio::try_join!(event_handler_task, accept_task) {
+        eprintln!("Error in tasks: {}", e);
+        process::exit(1);
+    }
 }
 
 

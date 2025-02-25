@@ -5,23 +5,21 @@ use crate::redis_client::Client;
 use crate::replication_config::ReplicationConfig;
 use crate::value_entry::ValueEntry;
 use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::RwLock;
 
 pub struct EventHandler {
-    db: Arc<RwLock<HashMap<String, ValueEntry>>>,
-    config: Arc<RwLock<HashMap<String, String>>>,
-    replication_config: Arc<RwLock<ReplicationConfig>>,
+    db: HashMap<String, ValueEntry>,
+    config: HashMap<String, String>,
+    replication_config: ReplicationConfig,
     client_manager: ClientManager,
     publisher: EventPublisher,
 }
 
 impl EventHandler {
     pub fn new(
-        db: Arc<RwLock<HashMap<String, ValueEntry>>>,
-        config: Arc<RwLock<HashMap<String, String>>>,
-        replication_config: Arc<RwLock<ReplicationConfig>>,
+        db: HashMap<String, ValueEntry>,
+        config: HashMap<String, String>,
+        replication_config: ReplicationConfig,
         publisher: EventPublisher,
     ) -> Self {
         Self {
@@ -35,44 +33,62 @@ impl EventHandler {
 
     pub async fn handle_event(&mut self, event: RedisEvent) {
         match event {
-            RedisEvent::ClientConnected { client_id, writer, addr } => {
-                println!("New client connected: {}", client_id);
-                let client = Client::new(client_id, writer, addr);
-                self.client_manager.add_client(client_id, client);
-            }
-
-            RedisEvent::ClientDisconnected { client_id } => {
-                println!("Client disconnected: {}", client_id);
-                self.client_manager.remove_client(client_id);
-            }
-
-            RedisEvent::CommandReceived { client_id, command } => {
-                if client_id == 0 {
-                    let mut db = self.db.write().await;
-                    if let Err(e) = command.execute_without_response(&mut db).await {
-                        eprintln!("Failed to execute command from master: {}", e);
-                    }
-                } else if let Some(client) = self.client_manager.get_client_mut(&client_id) {
-                    if let Err(e) = command.handle_command(
-                        &mut client.writer,
-                        &self.db,
-                        &self.config,
-                        &self.replication_config,
-                        client.addr,
-                        &self.publisher,
-                    ).await {
+            RedisEvent::Command { client_id, command } => {
+                if let Some(client) = self.client_manager.get_client_mut(&client_id) {
+                    let addr = client.get_addr();
+                    if let Err(e) = command
+                        .handle_command(
+                            client.get_writer_mut(),
+                            &mut self.db,
+                            &mut self.config,
+                            &mut self.replication_config,
+                            addr,
+                            &self.publisher,
+                        )
+                        .await
+                    {
                         eprintln!("Failed to handle command: {}", e);
                     }
                 }
             }
 
-            RedisEvent::SlaveConnected { addr } => {
-                println!("New slave connected: {}", addr);
-                let client_id = addr.port() as u64;
-
+            RedisEvent::ClientConnected {
+                client_id,
+                writer,
+                addr,
+            } => {
+                let client = Client::new(writer, addr);
+                self.client_manager.add_client(client_id, client);
                 if let Some(_) = self.client_manager.get_client_mut(&client_id) {
-                    self.replication_config.write().await.register_slave(addr).await;
+                    self.replication_config.register_slave(addr);
                 }
+            }
+
+            RedisEvent::ClientDisconnected { client_id } => {
+                self.client_manager.remove_client(client_id);
+            }
+
+            RedisEvent::CommandReceived { client_id, command } => {
+                if let Some(client) = self.client_manager.get_client_mut(&client_id) {
+                    let addr = client.get_addr();
+                    if let Err(e) = command
+                        .handle_command(
+                            client.get_writer_mut(),
+                            &mut self.db,
+                            &mut self.config,
+                            &mut self.replication_config,
+                            addr,
+                            &self.publisher,
+                        )
+                        .await
+                    {
+                        eprintln!("Failed to handle received command: {}", e);
+                    }
+                }
+            }
+
+            RedisEvent::SlaveConnected { addr } => {
+                println!("Slave connected: {}", addr);
             }
 
             RedisEvent::SlaveDisconnected { addr } => {
@@ -80,18 +96,13 @@ impl EventHandler {
             }
 
             RedisEvent::PropagateSlave { message } => {
-                let repl_guard = self.replication_config.read().await;
-                let slaves = repl_guard.list_slaves().await;
-
+                let slaves = self.replication_config.get_slaves().clone();
                 for slave in slaves.iter() {
                     let client_id = slave.addr.port() as u64;
-
                     if let Some(client) = self.client_manager.get_client_mut(&client_id) {
-                        if let Err(e) = client.get_writer().write_all(message.as_bytes()).await {
+                        if let Err(e) = client.get_writer_mut().write_all(message.as_bytes()).await {
                             eprintln!("Failed to propagate message to slave {}: {}", slave.addr, e);
                         }
-                    } else {
-                        println!("No client found for slave addr: {}", slave.addr);
                     }
                 }
             }
