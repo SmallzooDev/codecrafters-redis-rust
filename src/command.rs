@@ -13,7 +13,12 @@ pub enum Command {
     PING,
     ECHO(String),
     GET(String),
-    SET { key: String, value: String, px: Option<u64>, ex: Option<u64> },
+    SET {
+        key: String,
+        value: String,
+        px: Option<u64>,
+        ex: Option<u64>,
+    },
     CONFIG(ConfigCommand),
     KEYS(String),
     INFO(String),
@@ -41,7 +46,10 @@ impl Command {
         peer_addr: SocketAddr,
         publisher: &EventPublisher,
     ) -> std::io::Result<()> {
-        match self.execute(db, config, replication_config, peer_addr, publisher).await {
+        match self
+            .execute(db, config, replication_config, peer_addr, publisher)
+            .await
+        {
             Ok(responses) => {
                 for response in responses {
                     match response {
@@ -111,7 +119,9 @@ impl Command {
                     value
                 );
 
-                publisher.publish_propagate_slave(replicated_command).await
+                publisher
+                    .publish_propagate_slave(replicated_command)
+                    .await
                     .map_err(|e| format!("Failed to propagate command to slaves: {}", e))?;
 
                 Ok(vec![CommandResponse::Simple(response)])
@@ -119,7 +129,9 @@ impl Command {
             Command::CONFIG(command) => Ok(vec![CommandResponse::Simple(
                 Self::execute_config(command, config).await,
             )]),
-            Command::KEYS(_pattern) => Ok(vec![CommandResponse::Simple(Self::execute_keys(db).await)]),
+            Command::KEYS(_pattern) => {
+                Ok(vec![CommandResponse::Simple(Self::execute_keys(db).await)])
+            }
             Command::INFO(section) => Ok(vec![CommandResponse::Simple(
                 Self::execute_info(section, replication_config).await,
             )]),
@@ -136,31 +148,64 @@ impl Command {
                 if value_entry.is_expired() {
                     format!("{}-1{}", BULK_STRING_PREFIX, CRLF)
                 } else {
-                    format!("{}{}{}{}{}", BULK_STRING_PREFIX, value_entry.value.len(), CRLF, value_entry.value, CRLF)
+                    format!(
+                        "{}{}{}{}{}",
+                        BULK_STRING_PREFIX,
+                        value_entry.value.len(),
+                        CRLF,
+                        value_entry.value,
+                        CRLF
+                    )
                 }
             }
             None => format!("{}-1{}", BULK_STRING_PREFIX, CRLF),
         }
     }
 
-    async fn execute_set(key: &String, value: &String, ex: Option<u64>, px: Option<u64>, db: &mut HashMap<String, ValueEntry>) -> String {
+    async fn execute_set(
+        key: &String,
+        value: &String,
+        ex: Option<u64>,
+        px: Option<u64>,
+        db: &mut HashMap<String, ValueEntry>,
+    ) -> String {
         let expiration_ms = match (px, ex) {
             (Some(ms), _) => Some(ms),
             (None, Some(s)) => Some(s * 1000),
             _ => None,
         };
 
-        db.insert(key.clone(), ValueEntry::new_relative(value.clone(), expiration_ms));
+        db.insert(
+            key.clone(),
+            ValueEntry::new_relative(value.clone(), expiration_ms),
+        );
         format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF)
     }
 
-    async fn execute_config(command: &ConfigCommand, config: &Arc<RwLock<HashMap<String, String>>>) -> String {
+    async fn execute_config(
+        command: &ConfigCommand,
+        config: &Arc<RwLock<HashMap<String, String>>>,
+    ) -> String {
         match command {
             ConfigCommand::GET(key) => {
                 let config = config.read().await;
                 match config.get(key.as_str()) {
                     Some(value) => {
-                        format!("{}2{}{}{}{}{}{}{}{}{}{}{}", ARRAY_PREFIX, CRLF, BULK_STRING_PREFIX, key.len(), CRLF, key, CRLF, BULK_STRING_PREFIX, value.len(), CRLF, value, CRLF)
+                        format!(
+                            "{}2{}{}{}{}{}{}{}{}{}{}{}",
+                            ARRAY_PREFIX,
+                            CRLF,
+                            BULK_STRING_PREFIX,
+                            key.len(),
+                            CRLF,
+                            key,
+                            CRLF,
+                            BULK_STRING_PREFIX,
+                            value.len(),
+                            CRLF,
+                            value,
+                            CRLF
+                        )
                     }
                     None => format!("{}-1{}", BULK_STRING_PREFIX, CRLF),
                 }
@@ -178,7 +223,10 @@ impl Command {
         response
     }
 
-    async fn execute_info(section: &String, replication_config: &Arc<RwLock<ReplicationConfig>>) -> String {
+    async fn execute_info(
+        section: &String,
+        replication_config: &Arc<RwLock<ReplicationConfig>>,
+    ) -> String {
         if section.to_lowercase() == "replication" {
             let replication_config = replication_config.read().await;
             let replication_info = replication_config.get_replication_info().await;
@@ -200,6 +248,10 @@ impl Command {
             return format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF);
         } else if args[0] == "capa" {
             return format!("{}OK{}", SIMPLE_STRING_PREFIX, CRLF);
+        } else if args[0].to_lowercase() == "getack" {
+            // todo
+            print!("got some replconf ack req");
+            return format!("*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$1\r\n0\r\n");
         }
         format!("-ERR Invalid REPLCONF arguments{}", CRLF)
     }
@@ -223,10 +275,8 @@ impl Command {
             );
 
             // TODO : give real rdb file if needed
-            const EMPTY_RDB_FILE: &[u8] = &[
-                0x52, 0x45, 0x44, 0x49, 0x53, 0x30, 0x30, 0x30, 0x39,
-                0xFF,
-            ];
+            const EMPTY_RDB_FILE: &[u8] =
+                &[0x52, 0x45, 0x44, 0x49, 0x53, 0x30, 0x30, 0x30, 0x39, 0xFF];
 
             vec![
                 CommandResponse::Simple(full_resync_response),
