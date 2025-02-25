@@ -297,7 +297,9 @@ impl ConfigHandler {
             }
         }
 
-        self.respond_with_ack(&mut write_stream).await;
+        if let Err(e) = self.respond_with_ack(&mut write_stream).await {
+            return Err(format!("Failed to send ACK response: {}", e));
+        }
 
         // 복제 설정 업데이트
         self.replication_config
